@@ -14,7 +14,7 @@ Pruebas sin conexión: `node --test test/plugin.test.mjs`. Validar: `node sdk/va
 El código de `sdk/`, `contract.json` y `kino.d.ts` viene de las plantillas de Kino (Apache 2.0, ver LICENSE y NOTICE).
 
 
-### Resolución directa de servidores (0.1.6)
+### Resolución directa de servidores (0.1.7)
 
 - **OK.ru:** lee las opciones y metadatos del reproductor, detecta si el manifiesto es DASH (`.mpd`) o HLS (`.m3u8`) y lo entrega a Kino con el tipo MIME correspondiente; solo usa MP4/WebM cuando la URL de video es reconocible y envía el `Referer` del embed y conserva `Origin`.
 - **Rumble:** consulta `embedJS` con `ver=2` y busca las fuentes HLS/MP4/WebM en la estructura de respuesta; si no aparecen, conserva la captura del navegador como respaldo.
