@@ -533,6 +533,65 @@ function decodeVoeConfig(encoded) {
     return "";
   }
 }
+function parseOkruPlayerOptions(html) {
+  const tags = String(html || "").match(/<[^>]+\\bdata-options\\s*=\\s*(?:"[\\s\\S]*?"|'[\\s\\S]*?')[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const m = /\\bdata-options\\s*=\\s*(["'])([\\s\\S]*?)\\1/i.exec(tag);
+    if (!m) continue;
+    const raw = decode(m[2]).replace(/\\\\u0026/gi, "&").replace(/\\\\\\//g, "/");
+    try { return JSON.parse(raw); } catch {}
+    try { return JSON.parse(decode(raw)); } catch {}
+  }
+  return null;
+}
+
+async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
+  let parsed;
+  try { parsed = new URL(embedUrl); } catch { return null; }
+  const id = (parsed.pathname.match(/\\/embed\\/([a-z0-9_-]+)/i) || parsed.pathname.match(/\\/v([a-z0-9_-]+)\\/?$/i) || [])[1];
+  if (!id) return null;
+  const apiUrl = "https://rumble.com/embedJS/u3/?request=video&v=" + encodeURIComponent(id);
+  const r = await kino.fetch(apiUrl, {
+    headers: { Accept: "application/json,text/plain,*/*", Referer: embedUrl, "User-Agent": userAgent },
+    timeoutMs: 9000
+  });
+  if (!r.ok) return null;
+  let data;
+  try { data = r.json(); } catch { try { data = JSON.parse(r.text()); } catch { return null; } }
+  const candidates = [];
+  const walk = (node, key, depth) => {
+    if (depth > 10 || node == null) return;
+    if (typeof node === "string") {
+      const value = unescapePlayerText(node).trim();
+      if (!/^https?:\\/\\//i.test(value)) return;
+      const hint = String(key || "").toLowerCase();
+      const hls = /hls|m3u8|mpegurl/.test(hint) || /\\.m3u8(?:[?#]|$)/i.test(value);
+      const webm = /webm/.test(hint) || /\\.webm(?:[?#]|$)/i.test(value);
+      const mp4 = /mp4|\\.mp4/i.test(hint) || /\\.mp4(?:[?#]|$)/i.test(value);
+      if (hls || mp4 || webm) {
+        const quality = /(?:^|\\D)(2160|1440|1080|720|480|360|240)(?:\\D|$)/.exec(hint + " " + value);
+        candidates.push({ url: value, type: hls ? "hls" : webm ? "webm" : "mp4", quality: quality ? Number(quality[1]) : 0 });
+      }
+      return;
+    }
+    if (Array.isArray(node)) { for (const item of node) walk(item, key, depth + 1); return; }
+    if (typeof node === "object") {
+      for (const [childKey, value] of Object.entries(node)) walk(value, childKey, depth + 1);
+    }
+  };
+  walk(data, "", 0);
+  const uniqueCandidates = candidates.filter((item, index, all) => all.findIndex((x) => x.url === item.url) === index);
+  uniqueCandidates.sort((a, b) => {
+    const rank = (x) => x.type === "hls" ? 0 : x.type === "mp4" ? 1 : 2;
+    return rank(a) - rank(b) || b.quality - a.quality;
+  });
+  const chosen = uniqueCandidates[0];
+  if (!chosen) return null;
+  const mime = chosen.type === "hls" ? "application/x-mpegURL" : chosen.type === "webm" ? "video/webm" : "video/mp4";
+  log("servidor " + label + ": fuente de Rumble resuelta directamente (" + chosen.type.toUpperCase() + ")");
+  return directStream(chosen.url, label + " · " + site.name, embedUrl, mime);
+}
+
 async function resolveManual(embed, site, label) {
   let host = "";
   let url;
@@ -560,28 +619,78 @@ async function resolveManual(embed, site, label) {
       return null;
     }
 
+    if (host === "rumble.com" || host.endsWith(".rumble.com")) {
+      const stream = await resolveRumbleDirect(embed, site, label, headers["User-Agent"]);
+      if (stream) return stream;
+      return null;
+    }
+
     if (host === "ok.ru" || host.endsWith(".ok.ru")) {
-      const embedUrl = embed.replace("://m.ok.ru", "://ok.ru").replace("/video/", "/videoembed/");
-      const r = await kino.fetch(embedUrl, { headers });
+      const id = (url.pathname.match(/\\/video(?:embed)?\\/(\\d+)/i) || [])[1];
+      if (!id) return null;
+      const embedUrl = "https://ok.ru/videoembed/" + id;
+      const r = await kino.fetch(embedUrl, { headers: { ...headers, Referer: "https://ok.ru/" }, timeoutMs: 9000 });
       if (!r.ok) return null;
       const html = unescapePlayerText(r.text());
-      const links = [];
-      const qualities = { mobile: 144, lowest: 240, low: 360, sd: 480, hd: 720, full: 1080, quad: 1440, ultra: 2160 };
-      const entry = /"name":"([a-z]+)","url":"(https?:\/\/[^"]+)"/gi;
-      let m;
-      while ((m = entry.exec(html))) {
-        const q = qualities[m[1].toLowerCase()];
-        if (q) links.push({ url: m[2].trim(), q });
+      const player = parseOkruPlayerOptions(html);
+      const flashvars = player && player.flashvars;
+      if (!flashvars) return null;
+      let metadata = flashvars.metadata;
+      if (typeof metadata === "string") {
+        try { metadata = JSON.parse(decode(metadata)); } catch { metadata = null; }
       }
-      const hls = /"(?:hlsManifestUrl|ondemandHls|hlsMasterPlaylistUrl)":"(https?:\/\/[^"]+)"/i.exec(html);
-      if (hls && hls[1]) {
-        log("servidor " + label + ": URL HLS de OK.ru resuelta directamente");
-        return directStream(hls[1], label + " · " + site.name, embedUrl, "application/x-mpegURL");
+      if (!metadata && flashvars.metadataUrl) {
+        try {
+          const metadataUrl = new URL(decode(flashvars.metadataUrl), "https://ok.ru/").href;
+          const mr = await kino.fetch(metadataUrl, { headers: { ...headers, Referer: "https://ok.ru/" }, timeoutMs: 7000 });
+          if (mr.ok) metadata = mr.json();
+        } catch (e) { log("servidor " + label + ": no se pudieron leer metadatos de OK.ru"); }
       }
-      links.sort((a, b) => b.q - a.q);
-      if (links.length) {
-        log("servidor " + label + ": video de OK.ru resuelto directamente");
-        return directStream(links[0].url, label + " · " + site.name, embedUrl, "video/mp4");
+      const videos = metadata && Array.isArray(metadata.videos) ? metadata.videos.slice() : [];
+      const rank = (v) => {
+        const quality = String(v.name || v.quality || "").toLowerCase();
+        if (/1080|full/.test(quality)) return 0;
+        if (/720|hd/.test(quality)) return 1;
+        if (/480|sd/.test(quality)) return 2;
+        return 3;
+      };
+      const directVideo = (v) => typeof v.url === "string" && /^https:\\/\\//i.test(v.url) && /\\.(?:mp4|webm)(?:[?#]|$)/i.test(v.url);
+      videos.sort((a, b) => rank(a) - rank(b));
+      const streamHeaders = { Referer: "https://ok.ru/", Origin: "https://ok.ru" };
+      const hls = metadata && (metadata.hlsMasterPlaylistUrl || metadata.hlsManifestUrl || metadata.ondemandHls || metadata.hlsMasterUrl);
+      const direct = videos.find(directVideo);
+      const alternatives = (selectedUrl) => videos.filter((v) => directVideo(v) && v.url !== selectedUrl).slice(0, 7).map((v) => ({
+        url: v.url,
+        mime: /\\.webm(?:[?#]|$)/i.test(v.url) ? "video/webm" : "video/mp4",
+        headers: streamHeaders,
+        label: ("OK.ru · " + String(v.name || v.quality || "Video")).slice(0, 48)
+      }));
+      if (direct) {
+        const stream = {
+          url: direct.url,
+          mime: /\\.webm(?:[?#]|$)/i.test(direct.url) ? "video/webm" : "video/mp4",
+          headers: streamHeaders,
+          label: ("OK.ru · " + String(direct.name || direct.quality || "Video")).slice(0, 48)
+        };
+        stream.alternatives = alternatives(direct.url);
+        if (typeof hls === "string" && /^https:\\/\\//i.test(hls) && hls !== direct.url) {
+          stream.alternatives.push({ url: hls, mime: "application/x-mpegURL", headers: streamHeaders, label: "OK.ru · HLS" });
+        }
+        if (!stream.alternatives.length) delete stream.alternatives;
+        log("servidor " + label + ": video de OK.ru resuelto desde metadata");
+        return stream;
+      }
+      if (typeof hls === "string" && /^https:\\/\\//i.test(hls)) {
+        const stream = { url: hls, mime: "application/x-mpegURL", headers: streamHeaders, label: "OK.ru · HLS" };
+        stream.alternatives = alternatives(hls);
+        if (!stream.alternatives.length) delete stream.alternatives;
+        log("servidor " + label + ": HLS de OK.ru resuelto desde metadata");
+        return stream;
+      }
+      const other = videos.find((v) => typeof v.url === "string" && /^https:\\/\\//i.test(v.url));
+      if (other) {
+        log("servidor " + label + ": URL de video de OK.ru resuelta desde metadata");
+        return directStream(other.url, label + " · " + site.name, "https://ok.ru/", /\\.webm(?:[?#]|$)/i.test(other.url) ? "video/webm" : "video/mp4");
       }
       return null;
     }
