@@ -654,6 +654,219 @@ async function resolvePageMedia(embed, site, label, headers) {
   return directStream(media.url, label + " · " + site.name, embed, media.hls ? "application/x-mpegURL" : media.dash ? "application/dash+xml" : "video/mp4");
 }
 
+
+// ---------- Bysekoze / n1mwq encrypted playback API ----------
+function b64urlToBytes(value) {
+  const s = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = s + "=".repeat((4 - s.length % 4) % 4);
+  const raw = atob(padded);
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+function bytesToB64(bytes) {
+  let raw = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) raw += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
+  return btoa(raw);
+}
+function b64url(value) {
+  return String(value || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function byseRotate(x, n) {
+  return ((x << n) | (x >>> (32 - n))) >>> 0;
+}
+function byseMix(a) {
+  a[0] = (a[0] + a[1]) >>> 0;
+  a[3] = byseRotate((a[3] ^ a[0]) >>> 0, 16);
+  a[2] = (a[2] + a[3]) >>> 0;
+  a[1] = byseRotate((a[1] ^ a[2]) >>> 0, 12);
+  a[0] = (a[0] + a[1]) >>> 0;
+  a[3] = byseRotate((a[3] ^ a[0]) >>> 0, 8);
+  a[2] = (a[2] + a[3]) >>> 0;
+  a[1] = byseRotate((a[1] ^ a[2]) >>> 0, 7);
+}
+function byseWorkHash(input) {
+  const mask = 0xffffffff;
+  const state = [1779033703, 3144134277, 1013904242, 2773480762];
+  const memory = new Uint32Array(512);
+  for (let i = 0; i < input.length; i++) {
+    state[0] = byseRotate((state[0] + input.charCodeAt(i)) >>> 0, 7);
+    byseMix(state);
+  }
+  for (let i = 0; i < 8; i++) byseMix(state);
+  for (let i = 0; i < 512; i++) {
+    byseMix(state);
+    memory[i] = (state[0] ^ state[2]) >>> 0;
+  }
+  for (let round = 0; round < 2; round++) {
+    for (let i = 0; i < 512; i++) {
+      const a = memory[i] & 511;
+      let c = (memory[i] + memory[a]) >>> 0;
+      c = byseRotate(c, 13);
+      c = (c ^ Math.imul(memory[(i + 1) & 511], 2654435761)) >>> 0;
+      memory[i] = c;
+      state[0] = (state[0] ^ c) >>> 0;
+      byseMix(state);
+    }
+  }
+  const out = new Uint32Array(8);
+  for (let i = 0; i < 8; i++) {
+    byseMix(state);
+    let v = state[0] >>> 0;
+    for (let j = i * 64; j < (i + 1) * 64; j++) {
+      const d = memory[j];
+      v = (v + d) >>> 0;
+      v = byseRotate(v, 5);
+      v = (v ^ Math.imul(d, 2246822519)) >>> 0;
+    }
+    out[i] = (v ^ state[2]) >>> 0;
+  }
+  return out;
+}
+function byseLeadingZeroBits(words) {
+  let count = 0;
+  for (const word of words) {
+    if (word === 0) { count += 32; continue; }
+    return count + Math.clz32(word);
+  }
+  return count;
+}
+async function byseSolvePow(nonce, difficulty) {
+  const bits = Number(difficulty);
+  if (!Number.isFinite(bits) || bits < 0 || bits > 32) return null;
+  if (bits <= 0) return "0";
+  const start = Date.now();
+  for (let counter = 0; counter < 200000 && Date.now() - start < 14000; counter++) {
+    const hash = byseWorkHash(String(nonce) + ":" + counter);
+    if (byseLeadingZeroBits(hash) >= bits) return String(counter);
+    if ((counter & 31) === 31) await kino.sleep(0);
+  }
+  return null;
+}
+function byseFingerprint(tokenData) {
+  return { token: tokenData.token, viewer_id: tokenData.viewer_id, device_id: tokenData.device_id, confidence: tokenData.confidence };
+}
+async function resolveBysekoze(embed, site, label, headers) {
+  const inputUrl = new URL(embed);
+  const code = (inputUrl.pathname.match(/\/(?:e|embed|sovm9|boh)\/([a-z0-9_-]+)/i) || [])[1];
+  if (!code) return null;
+  // Follow the site's redirect first: Bysekoze commonly forwards to its rotating n1mwq.org origin.
+  let pageResponse;
+  try { pageResponse = await kino.fetch(embed, { headers, timeoutMs: 9000 }); } catch { return null; }
+  if (!pageResponse.ok) return null;
+  let origin = inputUrl.origin;
+  try { origin = new URL(pageResponse.url || embed).origin; } catch {}
+  const pageUrl = pageResponse.url || embed;
+  const pageHeaders = {
+    ...headers,
+    Origin: origin,
+    Referer: pageUrl,
+    "X-Embed-Origin": new URL(site.base).origin,
+    "X-Embed-Referer": site.base + "/",
+    "X-Embed-Parent": site.base + "/"
+  };
+  // If the redirect ends on the main site, use its embed API paths and keep the response's cookies.
+  const embedMode = /\/(?:embed|sovm9|boh)\//i.test(new URL(pageUrl).pathname);
+  const prefix = "/api/videos/" + code + (embedMode ? "/embed" : "");
+  const getJson = async (path, opts) => {
+    const r = await kino.fetch(origin + path, { headers: pageHeaders, timeoutMs: 12000, ...(opts || {}) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  };
+  try {
+    const settings = await getJson(prefix + "/settings");
+    let fingerprint = null;
+    let captchaToken = "";
+    if (settings && settings.captcha_required) {
+      const challenge = await getJson("/api/videos/access/challenge", { method: "POST", body: { json: {} }, timeoutMs: 15000 });
+      if (!challenge || !challenge.nonce || !challenge.challenge_id) throw new Error("challenge incompleto");
+      const pair = kino.crypto.generateKeyPair({ type: "ec", namedCurve: "P-256" });
+      const signature = b64url(kino.crypto.sign({ key: pair.privateKey, data: challenge.nonce, hash: "SHA-256", format: "ieee-p1363", outputEncoding: "base64" }));
+      const rand = () => Number.parseInt(kino.crypto.randomBytes(4, "hex"), 16) / 0xffffffff;
+      const fingerprintHash = (n) => {
+        const hex = kino.crypto.hash("sha256", String(n), { outputEncoding: "hex" });
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+        return b64url(bytesToB64(bytes));
+      };
+      const r = rand();
+      const client = {
+        user_agent: headers["User-Agent"],
+        architecture: "arm", bitness: "32", platform: "Android", platform_version: "6.0.1",
+        model: "SM-G5510", ua_full_version: "59.0.3071.125",
+        brand_full_versions: [{ brand: "SamsungBrowser", version: "7.2" }],
+        pixel_ratio: 1, screen_width: 1280, screen_height: 720, color_depth: 24,
+        languages: ["en-US"], timezone: "America/New_York", hardware_concurrency: 4,
+        device_memory: 2, touch_points: 1,
+        canvas_hash: fingerprintHash(r), audio_hash: fingerprintHash(r + 1),
+        fonts_hash: fingerprintHash(r + 3), codecs_hash: fingerprintHash(r + 4),
+        media_devices: "ai1ao1vi4", pointer_type: "coarse",
+        extra: { vendor: "Samsung", appVersion: "7.2" }
+      };
+      const attest = await getJson("/api/videos/access/attest", {
+        method: "POST",
+        body: { json: {
+          viewer_id: "", device_id: "", challenge_id: challenge.challenge_id, nonce: challenge.nonce,
+          signature, public_key: { ...pair.publicKey.jwk, ext: true, key_ops: ["verify"] },
+          client, storage: {}, attributes: { entropy: "high" }
+        } },
+        timeoutMs: 20000
+      });
+      if (!attest || !attest.token || !attest.viewer_id || !attest.device_id) throw new Error("atestación incompleta");
+      fingerprint = byseFingerprint(attest);
+      const captcha = await getJson(prefix + "/captcha", { method: "POST", body: { json: { fingerprint } }, timeoutMs: 15000 });
+      if (!captcha || !captcha.pow_nonce || !captcha.pow_token) throw new Error("desafío PoW incompleto");
+      const solution = await byseSolvePow(captcha.pow_nonce, captcha.pow_difficulty);
+      if (solution == null) throw new Error("PoW agotó el tiempo");
+      const verified = await getJson(prefix + "/captcha/verify", {
+        method: "POST", body: { json: { pow_token: captcha.pow_token, solution, fingerprint } }, timeoutMs: 15000
+      });
+      captchaToken = String((verified && verified.token) || "");
+      if (!captchaToken) throw new Error("verificación CAPTCHA sin token");
+    }
+    const playback = await getJson(prefix + "/playback", {
+      method: "POST",
+      headers: { ...pageHeaders, ...(captchaToken ? { "X-Captcha-Token": captchaToken } : {}) },
+      body: { json: settings && settings.captcha_required ? { fingerprint } : {} },
+      timeoutMs: 20000
+    });
+    let sources = Array.isArray(playback.sources) ? playback.sources : null;
+    if (!sources && playback.playback && Array.isArray(playback.playback.key_parts)) {
+      const pd = playback.playback;
+      let parts = pd.key_parts;
+      const version = Number(pd.version);
+      if (version && version >= 1 && version <= parts.length) parts = [parts[version - 1], parts[parts.length - version]];
+      const keyBytes = parts.map(b64urlToBytes);
+      const keyLength = keyBytes.reduce((sum, b) => sum + b.length, 0);
+      const key = new Uint8Array(keyLength);
+      let offset = 0;
+      for (const bytes of keyBytes) { key.set(bytes, offset); offset += bytes.length; }
+      const decrypted = kino.crypto.decrypt("aes-256-gcm", {
+        key: bytesToB64(key), keyEncoding: "base64",
+        iv: bytesToB64(b64urlToBytes(pd.iv)), ivEncoding: "base64",
+        data: bytesToB64(b64urlToBytes(pd.payload)), inputEncoding: "base64", outputEncoding: "utf8"
+      });
+      const parsed = JSON.parse(decrypted);
+      sources = Array.isArray(parsed.sources) ? parsed.sources : [];
+    }
+    if (!sources || !sources.length) throw new Error("el playback no devolvió fuentes");
+    const candidates = sources.map((x) => ({
+      label: String(x.label || x.name || "Bysekoze"),
+      url: String(x.url || "")
+    })).filter((x) => x.url);
+    candidates.sort((a, b) => {
+      const quality = (s) => Number((/(\d{3,4})\s*[pP]?/.exec(s) || [])[1]) || 0;
+      return quality(b.label) - quality(a.label);
+    });
+    const chosen = candidates.find((x) => /^https?:\/\//i.test(x.url)) || candidates[0];
+    if (!chosen) throw new Error("fuentes sin URL");
+    const streamUrl = new URL(chosen.url, origin + "/").href;
+    log("servidor " + label + ": Bysekoze resolvió " + chosen.label.slice(0, 32));
+    return directStream(streamUrl, (chosen.label + " · " + site.name).slice(0, 48), origin + "/", /\.m3u8(?:$|[?#])/i.test(streamUrl) ? "application/x-mpegURL" : "video/mp4");
+  } catch (e) {
+    log("servidor " + label + ": Bysekoze HTTP no completó la resolución (" + String(e && e.message || e).slice(0, 80) + ")");
+    return null;
+  }
+}
+
 async function resolveManual(embed, site, label) {
   let host = "";
   let url;
@@ -665,12 +878,15 @@ async function resolveManual(embed, site, label) {
   }
   const headers = { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0 Safari/537.36", Referer: embed };
   try {
-    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") ||
-        host === "strp2p.com" || host.endsWith(".strp2p.com") ||
+    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") || host === "n1mwq.org" || host.endsWith(".n1mwq.org")) {
+      const stream = await resolveBysekoze(embed, site, label, headers);
+      if (stream) return stream;
+      return null;
+    }
+
+    if (host === "strp2p.com" || host.endsWith(".strp2p.com") ||
         host === "vidhidepro.com" || host.endsWith(".vidhidepro.com") ||
         host === "embedwish.com" || host.endsWith(".embedwish.com")) {
-      // Try HTTP extraction first. VidHidePro and Embedwish still fall back to browser capture
-      // when no source is exposed; Byse and sp2p are intentionally HTTP-only.
       return await resolvePageMedia(embed, site, label, headers);
     }
 
