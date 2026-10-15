@@ -660,9 +660,58 @@ async function resolvePageMedia(embed, site, label, headers) {
     log("servidor " + label + ": página del reproductor respondió HTTP " + response.status);
     return null;
   }
-  const media = findDirectMedia(response.text());
+  const html = response.text();
+  let media = findDirectMedia(html);
+  const isSp2p = (() => {
+    try { const h = new URL(embed).hostname.toLowerCase(); return h === "strp2p.com" || h.endsWith(".strp2p.com"); } catch { return false; }
+  })();
+  if (!media && isSp2p) {
+    // sp2p builds its HLS URL after JavaScript runs. Inspect the static page's
+    // script references, then fetch only same-origin scripts and scan them without executing code.
+    const embedOrigin = new URL(embed).origin;
+    const scriptRefs = [];
+    const scriptRe = /<script\\b[^>]*\\bsrc\\s*=\\s*(["'])(.*?)\\1/gi;
+    let sm;
+    while ((sm = scriptRe.exec(html)) && scriptRefs.length < 12) {
+      try {
+        const scriptUrl = new URL(decode(sm[2]), embed).href;
+        const su = new URL(scriptUrl);
+        const key = su.origin + su.pathname;
+        if (!scriptRefs.some((x) => x.key === key)) scriptRefs.push({ key, url: scriptUrl, sameOrigin: su.origin === embedOrigin, host: su.hostname, path: su.pathname.slice(0, 100) });
+      } catch {}
+    }
+    const hints = [];
+    const inspect = (source, labelText) => {
+      const s = String(source || "");
+      const keys = ["hlsmod", "master.m3u8", "keys=", "keys:", "XMLHttpRequest", "fetch(", "/api/", "token", "sign", "m3u8"];
+      const found = keys.filter((k) => s.toLowerCase().includes(k.toLowerCase()));
+      if (found.length) hints.push(labelText + ":" + found.join(","));
+      const candidate = findDirectMedia(s);
+      if (candidate) return candidate;
+      return null;
+    };
+    media = inspect(html, "html");
+    const inspected = [];
+    for (const script of scriptRefs) {
+      if (!script.sameOrigin) continue;
+      inspected.push(script.host + script.path);
+      if (inspected.length > 4) break;
+      try {
+        const sr = await kino.fetch(script.url, { headers: { ...headers, Referer: embed }, timeoutMs: 3500 });
+        if (!sr.ok) { hints.push(script.path + ":HTTP" + sr.status); continue; }
+        const body = sr.text();
+        const found = inspect(body, script.path);
+        if (!media && found) media = found;
+      } catch (e) {
+        hints.push(script.path + ":fetch-error");
+      }
+      if (media) break;
+    }
+    log("diagnóstico sp2p estático: scripts=" + scriptRefs.map((s) => (s.sameOrigin ? "local:" : "externo:") + s.host + s.path).slice(0, 8).join("|") +
+      "; inspeccionados=" + inspected.join("|") + "; pistas=" + hints.slice(0, 8).join("|").slice(0, 700));
+  }
   if (!media) {
-    log("servidor " + label + ": HTML consultado directamente; no expuso URL HLS/MP4");
+    log("servidor " + label + ": HTML/JS estático no expuso URL HLS/MP4");
     return null;
   }
   const isVidHide = (() => {
