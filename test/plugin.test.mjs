@@ -46,7 +46,7 @@ const MD_EPISODE = `<button id="amagi_tab" class="md-server-tab">Voe</button><sc
 
 const SD_EPISODE =
   `<meta name="csrf-token" content="tok123">` +
-  [["Dailymotion", 0], ["OK.ru", 1]].map(([n, i]) => `<button type="button" class="server-tab-btn active"\n data-video-id="77"\n data-server-index="${i}"><span>${n}</span><span class="server-badge">Sub ES</span></button>`).join("");
+  [["Dailymotion", 0], ["OK.ru", 1], ["Rumble", 2]].map(([n, i]) => `<button type="button" class="server-tab-btn active"\n data-video-id="77"\n data-server-index="${i}"><span>${n}</span><span class="server-badge">Sub ES</span></button>`).join("");
 
 function sites(extra = {}) {
   const asked = [];
@@ -70,7 +70,7 @@ function sites(extra = {}) {
     asked.push((init.method || "GET") + " " + url);
     if (String(url).endsWith("/api/player/get-server")) {
       const { server_index } = JSON.parse(init.body);
-      return new Response(JSON.stringify({ success: true, embed_url: ["https://www.dailymotion.com/embed/video/x1", "https://ok.ru/videoembed/9"][server_index] }), { status: 200 });
+      return new Response(JSON.stringify({ success: true, embed_url: ["https://www.dailymotion.com/embed/video/x1", "https://ok.ru/videoembed/9", "https://rumble.com/embed/v7eiaew/"][server_index] }), { status: 200 });
     }
     return pages[url] === undefined ? new Response("no", { status: 404 }) : new Response(pages[url], { status: 200 });
   };
@@ -205,15 +205,29 @@ test("resolve (Dailymotion): uses the direct stream API without browser capture"
   });
 });
 
-test("resolve (OK.ru): uses the direct HLS URL after Dailymotion fails", async () => {
+test("resolve (OK.ru): reads player metadata and prefers a direct video with required headers", async () => {
   await withKino({
     "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
-    "https://ok.ru/videoembed/9": String.raw`{"hlsManifestUrl":"https://cdn.example/ok.m3u8"}`,
+    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[{"name":"hd","url":"https://cdn.example/ok.mp4"}],"hlsManifestUrl":"https://cdn.example/ok.m3u8"}}}'></div>`,
   }, async (plugin, captured) => {
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
-    assert.equal(stream.url, "https://cdn.example/ok.m3u8");
-    assert.equal(stream.mime, "application/x-mpegURL");
+    assert.equal(stream.url, "https://cdn.example/ok.mp4");
+    assert.equal(stream.mime, "video/mp4");
+    assert.equal(stream.headers.Referer, "https://ok.ru/");
+    assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1"]);
+  });
+});
+
+test("resolve (Rumble): reads its public embedJS API without browser capture", async () => {
+  await withKino({
+    "https://rumble.com/embedJS/u3/?request=video&v=v7eiaew": JSON.stringify({ ua: { hls: "https://cdn.example/rumble.m3u8" } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("srv:2:sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
+    assert.equal(stream.mime, "application/x-mpegURL");
+    assert.equal(stream.headers.Referer, "https://rumble.com/embed/v7eiaew/");
+    assert.deepEqual(captured, []);
   });
 });
 
