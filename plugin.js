@@ -1230,6 +1230,26 @@ async function capture(site, server) {
     return null;
   }
   const hls = /\.m3u8|mpegurl/i.test(pick.url + " " + (pick.mime || ""));
+  // For sp2p, record only URL structure (never signed query values) so the next
+  // iteration can identify its direct playback endpoint without exposing tokens.
+  try {
+    const host = new URL(embed).hostname.toLowerCase();
+    if (host === "strp2p.com" || host.endsWith(".strp2p.com")) {
+      const describe = (raw) => {
+        const u = new URL(raw);
+        const keys = [];
+        u.searchParams.forEach((_, key) => { if (!keys.includes(key)) keys.push(key); });
+        return u.hostname + u.pathname.slice(0, 100) + (keys.length ? "?keys=" + keys.slice(0, 12).join(",") : "");
+      };
+      let page = "desconocida";
+      try { page = describe(res.finalUrl || embed); } catch {}
+      let mediaInfo = "URL no reconocida";
+      try { mediaInfo = describe(pick.url); } catch {}
+      log("diagnóstico sp2p: página=" + page + "; medio=" + mediaInfo +
+        "; tipo=" + String(pick.mime || (hls ? "application/x-mpegURL" : "desconocido")) +
+        "; headers=" + Object.keys(pick.headers || {}).join(","));
+    }
+  } catch {}
   const stream = { url: pick.url, headers: pick.headers || {}, label: (server.name + " · " + site.name).slice(0, 48) };
   stream.mime = hls ? "application/x-mpegURL" : pick.mime && /^[a-z]+\/[\w.+-]+$/i.test(pick.mime) ? pick.mime : undefined;
   if (!stream.mime) delete stream.mime;
