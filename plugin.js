@@ -708,7 +708,7 @@ async function resolveManual(embed, site, label) {
           const ext = /\.(mpd|m3u8)$/i.exec(u.pathname);
           return {
             host: u.hostname,
-            pathTail: /\\.(mpd|m3u8)$/i.exec(u.pathname)?.[0].toLowerCase() || "(sin extensión)",
+            pathTail: /\.(mpd|m3u8)$/i.exec(u.pathname)?.[0].toLowerCase() || "(sin extensión)",
             extension: ext ? ext[1].toLowerCase() : "none",
             length: value.length,
             queryKeys: Array.from(u.searchParams.keys()).slice(0, 12)
