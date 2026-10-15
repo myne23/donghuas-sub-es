@@ -559,27 +559,31 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
   let data;
   try { data = r.json(); } catch { try { data = JSON.parse(r.text()); } catch { return null; } }
   const candidates = [];
-  const walk = (node, key, depth) => {
-    if (depth > 10 || node == null) return;
+  // Rumble nests stream URLs under ua.hls.url / ua.mp4.<quality>.url.
+  // Preserve the parent format hint while descending; otherwise the leaf key
+  // is only "url" and a valid stream is incorrectly discarded.
+  const walk = (node, key, depth, inheritedHint) => {
+    if (depth > 12 || node == null) return;
+    const ownHint = String(key || "").toLowerCase();
+    const hint = /(?:^|[^a-z])(hls|m3u8|mpegurl|mp4|webm)(?:$|[^a-z])/.test(ownHint) ? ownHint : String(inheritedHint || "").toLowerCase();
     if (typeof node === "string") {
       const value = unescapePlayerText(node).trim();
       if (!/^https?:\/\//i.test(value)) return;
-      const hint = String(key || "").toLowerCase();
       const hls = /hls|m3u8|mpegurl/.test(hint) || /\.m3u8(?:[?#]|$)/i.test(value);
       const webm = /webm/.test(hint) || /\.webm(?:[?#]|$)/i.test(value);
-      const mp4 = /mp4|\.mp4/i.test(hint) || /\.mp4(?:[?#]|$)/i.test(value);
+      const mp4 = /mp4/.test(hint) || /\.mp4(?:[?#]|$)/i.test(value);
       if (hls || mp4 || webm) {
         const quality = /(?:^|\D)(2160|1440|1080|720|480|360|240)(?:\D|$)/.exec(hint + " " + value);
         candidates.push({ url: value, type: hls ? "hls" : webm ? "webm" : "mp4", quality: quality ? Number(quality[1]) : 0 });
       }
       return;
     }
-    if (Array.isArray(node)) { for (const item of node) walk(item, key, depth + 1); return; }
+    if (Array.isArray(node)) { for (const item of node) walk(item, key, depth + 1, hint); return; }
     if (typeof node === "object") {
-      for (const [childKey, value] of Object.entries(node)) walk(value, childKey, depth + 1);
+      for (const [childKey, value] of Object.entries(node)) walk(value, childKey, depth + 1, hint);
     }
   };
-  walk(data, "", 0);
+  walk(data, "", 0, "");
   const uniqueCandidates = candidates.filter((item, index, all) => all.findIndex((x) => x.url === item.url) === index);
   uniqueCandidates.sort((a, b) => {
     const rank = (x) => x.type === "hls" ? 0 : x.type === "mp4" ? 1 : 2;
@@ -631,7 +635,10 @@ async function resolveManual(embed, site, label) {
       const embedUrl = "https://ok.ru/videoembed/" + id;
       const r = await kino.fetch(embedUrl, { headers: { ...headers, Referer: "https://ok.ru/" }, timeoutMs: 9000 });
       if (!r.ok) return null;
-      const html = unescapePlayerText(r.text());
+      // Parse data-options from the original HTML. Decoding &quot; across the
+      // whole page first can turn escaped attribute quotes into delimiters and
+      // truncate the tag before JSON.parse ever sees the metadata.
+      const html = r.text();
       const player = parseOkruPlayerOptions(html);
       const flashvars = player && player.flashvars;
       if (!flashvars) return null;
