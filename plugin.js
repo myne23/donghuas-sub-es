@@ -497,6 +497,133 @@ function embedAllowed(url) {
   }
 }
 
+// Manual resolvers for the common embeds. These run before browser capture so the app
+// does not need to execute the player's JavaScript for hosts whose stream URL is exposed by HTTP.
+function unescapePlayerText(raw) {
+  return String(raw || "")
+    .replace(/&quot;/g, '"').replace(/&amp;/g, "&")
+    .replace(/\\+u0026/gi, "&").replace(/\\+u003d/gi, "=")
+    .replace(/\\+(?:\/|u002f)/gi, "/").replace(/\\+"/g, '"');
+}
+function directStream(url, label, referer, mime) {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+  return { url, label: String(label).slice(0, 48), headers: referer ? { Referer: referer } : {}, mime: mime || (/\.m3u8(?:$|[?#])/i.test(url) ? "application/x-mpegURL" : undefined) };
+}
+function decodeBase64Text(value) {
+  try {
+    const raw = atob(value);
+    const bytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return "";
+  }
+}
+function decodeVoeConfig(encoded) {
+  try {
+    let value = String(encoded).replace(/[A-Za-z]/g, (c) => {
+      const base = c <= "Z" ? 65 : 97;
+      return String.fromCharCode(((c.charCodeAt(0) - base + 13) % 26) + base);
+    });
+    for (const separator of ["@$", "^^", "~@", "%?", "*~", "!!", "#&"]) value = value.split(separator).join("_");
+    value = value.replace(/_/g, "");
+    let bytes = Uint8Array.from(atob(value), (c) => (c.charCodeAt(0) - 3 + 256) & 255);
+    bytes = bytes.reverse();
+    return decodeBase64Text(String.fromCharCode(...bytes));
+  } catch {
+    return "";
+  }
+}
+async function resolveManual(embed, site, label) {
+  let host = "";
+  let url;
+  try {
+    url = new URL(embed);
+    host = url.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  const headers = { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0 Safari/537.36", Referer: embed };
+  try {
+    if (host === "dailymotion.com" || host.endsWith(".dailymotion.com")) {
+      const id = (url.searchParams.get("video") || (url.pathname.match(/\/video\/([A-Za-z0-9]+)/) || [])[1] || "").trim();
+      if (!id) return null;
+      const r = await kino.fetch("https://geo.dailymotion.com/videos/" + encodeURIComponent(id), {
+        headers: { Accept: "application/json", Referer: "https://geo.dailymotion.com/", "User-Agent": headers["User-Agent"] },
+      });
+      if (!r.ok) return null;
+      const data = r.json();
+      const streamUrl = data && data.stream && data.stream.url;
+      if (streamUrl) {
+        log("servidor " + label + ": URL de Dailymotion resuelta directamente");
+        return directStream(streamUrl, label + " · " + site.name, "https://geo.dailymotion.com/", "application/x-mpegURL");
+      }
+      return null;
+    }
+
+    if (host === "ok.ru" || host.endsWith(".ok.ru")) {
+      const embedUrl = embed.replace("://m.ok.ru", "://ok.ru").replace("/video/", "/videoembed/");
+      const r = await kino.fetch(embedUrl, { headers });
+      if (!r.ok) return null;
+      const html = unescapePlayerText(r.text());
+      const links = [];
+      const qualities = { mobile: 144, lowest: 240, low: 360, sd: 480, hd: 720, full: 1080, quad: 1440, ultra: 2160 };
+      const entry = /"name":"([a-z]+)","url":"(https?:\/\/[^"]+)"/gi;
+      let m;
+      while ((m = entry.exec(html))) {
+        const q = qualities[m[1].toLowerCase()];
+        if (q) links.push({ url: m[2].trim(), q });
+      }
+      const hls = /"(?:hlsManifestUrl|ondemandHls|hlsMasterPlaylistUrl)":"(https?:\/\/[^"]+)"/i.exec(html);
+      if (hls && hls[1]) {
+        log("servidor " + label + ": URL HLS de OK.ru resuelta directamente");
+        return directStream(hls[1], label + " · " + site.name, embedUrl, "application/x-mpegURL");
+      }
+      links.sort((a, b) => b.q - a.q);
+      if (links.length) {
+        log("servidor " + label + ": video de OK.ru resuelto directamente");
+        return directStream(links[0].url, label + " · " + site.name, embedUrl, "video/mp4");
+      }
+      return null;
+    }
+
+    if (host === "voe.sx" || host.endsWith(".voe.sx")) {
+      const r = await kino.fetch(embed, { headers: { "User-Agent": headers["User-Agent"] } });
+      if (!r.ok) return null;
+      let html = r.text();
+      const redirect = /window\.location\.href\s*=\s*['"]([^'"]+\/e\/[^'"]+)['"]/.exec(html);
+      if (redirect && redirect[1]) {
+        const rr = await kino.fetch(new URL(redirect[1], embed).href, { headers: { "User-Agent": headers["User-Agent"] } });
+        if (!rr.ok) return null;
+        html = rr.text();
+      }
+      let config = /<script[^>]+type=["']application\/json["'][^>]*>\s*(?:\[\s*)?["']([^"']+)["']/.exec(html);
+      let encoded = config && config[1];
+      // ALTCHA-gated VOE pages need a challenge POST; leave those to Kino's browser fallback.
+      if (!encoded) return null;
+      const decoded = decodeVoeConfig(encoded);
+      const source = /"source"\s*:\s*"([^"]+)"/.exec(decoded);
+      if (!source || !source[1]) return null;
+      const streamUrl = source[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+      log("servidor " + label + ": URL de VOE resuelta directamente");
+      return directStream(streamUrl, label + " · " + site.name, embed, /\.m3u8/i.test(streamUrl) ? "application/x-mpegURL" : undefined);
+    }
+
+    if (host === "odysee.com" || host.endsWith(".odysee.com") || host === "player.odycdn.com" || host.endsWith(".odycdn.com")) {
+      const r = await kino.fetch(embed, { headers });
+      if (!r.ok) return null;
+      const html = r.text().replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\\u0026/g, "&").replace(/\\u003D/g, "=").replace(/\\\//g, "/");
+      const m = /"contentUrl"\s*:\s*"([^"]+)"/i.exec(html);
+      if (!m || !m[1]) return null;
+      const streamUrl = m[1].replace(/\\u0026/g, "&").replace(/\\u003D/g, "=").replace(/\\\//g, "/");
+      log("servidor " + label + ": URL de Odysee resuelta directamente");
+      return directStream(streamUrl, label + " · " + site.name, embed, /\.m3u8/i.test(streamUrl) ? "application/x-mpegURL" : "video/mp4");
+    }
+  } catch (e) {
+    log("servidor " + label + ": resolver manual no disponible; pruebo navegador");
+  }
+  return null;
+}
+
 // Opens one player in the hidden browser and returns the video it requested, or null.
 async function capture(site, server) {
   let embed = "";
@@ -510,6 +637,8 @@ async function capture(site, server) {
     log("servidor " + server.name + ": reproductor no admitido");
     return null;
   }
+  const manual = await resolveManual(embed, site, server.name);
+  if (manual) return manual;
   let res;
   try {
     res = await kino.browser.capture(embed, { timeoutMs: CAPTURE_MS, headers: { Referer: site.base + "/" } });
