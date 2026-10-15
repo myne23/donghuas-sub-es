@@ -28,3 +28,10 @@ La versión 0.1.12 intenta resolver Filemoon/Byse (`bysekoze.com`) y `strp2p.com
 
 
 La versión 0.1.13 también intenta extraer URLs de medios por HTTP directo en VidHidePro y Embedwish antes de recurrir a la captura del navegador. Si el HTML no contiene una URL reconocible, esos dos servidores conservan la captura como respaldo. Byse/Filemoon y sp2p siguen siendo HTTP-only y no abren captura si falla la extracción directa. `strp2p.com` también está declarado entre los hosts permitidos del plugin.
+
+
+### Filemoon/Bysekoze (0.1.14)
+
+- El HTML inicial de Bysekoze no incluye la URL HLS: el reproductor la solicita mediante una API de playback cifrada y luego descarga un manifiesto HLS firmado.
+- El resolver sigue intentando HTTP directo primero, pero ahora permite la captura de navegador de Kino como respaldo para que JavaScript ejecute el flujo de reproducción y se detecte la URL HLS real. Se declara también el host del reproductor `n1mwq.org`.
+- `strp2p.com` continúa siendo HTTP-only; no se cambia el comportamiento de los demás servidores.
