@@ -776,6 +776,11 @@ async function resolveSp2pApi(embed, site, label, headers) {
     return null;
   }
 
+  // Prefer the reconstructed TikTok CDN route for this performance test.
+  // Keep the other two live URLs as fallbacks.
+  const sourceRank = (item) => item.label === "TikTok CDN" ? 0
+    : item.label === "Cloudflare nativo" ? 1 : 2;
+  candidates.sort((a, b) => sourceRank(a) - sourceRank(b));
   const selected = candidates[0];
   const stream = directStream(selected.url, label + " · " + site.name + " · sp2p", origin + "/", "application/x-mpegURL");
   if (!stream) return null;
@@ -795,7 +800,7 @@ async function resolveSp2pApi(embed, site, label, headers) {
 
   try {
     const u = new URL(selected.url);
-    log("servidor " + label + ": sp2p descifrado correctamente; HLS " + u.hostname + u.pathname.slice(0, 60) +
+    log("servidor " + label + ": sp2p descifrado correctamente; fuente=" + selected.label + "; HLS " + u.hostname + u.pathname.slice(0, 60) +
       (alternatives.length ? "; alternativas=" + alternatives.length : ""));
   } catch {
     log("servidor " + label + ": sp2p descifrado correctamente; HLS resuelto");
