@@ -1207,13 +1207,13 @@ async function capture(site, server) {
   }
   const manual = await resolveManual(embed, site, server.name);
   if (manual) return manual;
-  // sp2p stays HTTP-only. Byse/Filemoon now falls back to capture because its
-  // player obtains the signed HLS URL through an encrypted playback API after JS runs.
+  // Some sp2p pages expose no media URL in static HTML; try browser capture as a
+  // fallback when the user selects that server. Keep this after the direct HTTP resolver
+  // so the fast path remains unchanged for providers that publish a direct HLS URL.
   try {
     const host = new URL(embed).hostname.toLowerCase();
     if (host === "strp2p.com" || host.endsWith(".strp2p.com")) {
-      log("servidor " + server.name + ": no se pudo resolver por HTTP directo; sp2p omite captura de navegador");
-      return null;
+      log("servidor " + server.name + ": sin URL directa; probando captura del reproductor");
     }
   } catch {}
   let res;
