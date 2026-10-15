@@ -16,6 +16,6 @@ El código de `sdk/`, `contract.json` y `kino.d.ts` viene de las plantillas de K
 
 ### Resolución directa de servidores (0.1.6)
 
-- **OK.ru:** lee las opciones y metadatos del reproductor, detecta si el manifiesto es DASH (`.mpd`) o HLS (`.m3u8`) y lo entrega a Kino con el tipo MIME correspondiente; solo usa MP4/WebM cuando la URL de video es reconocible y conserva las cabeceras de origen.
+- **OK.ru:** lee las opciones y metadatos del reproductor, detecta si el manifiesto es DASH (`.mpd`) o HLS (`.m3u8`) y lo entrega a Kino con el tipo MIME correspondiente; solo usa MP4/WebM cuando la URL de video es reconocible y envía el `Referer` del embed y conserva `Origin`.
 - **Rumble:** consulta `embedJS` con `ver=2` y busca las fuentes HLS/MP4/WebM en la estructura de respuesta; si no aparecen, conserva la captura del navegador como respaldo.
 - Si el resolver directo no obtiene una fuente compatible, se conserva el mecanismo de captura de Kino como respaldo.
