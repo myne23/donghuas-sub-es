@@ -687,28 +687,36 @@ async function resolvePageMedia(embed, site, label, headers) {
       const lower = s.toLowerCase();
       const found = keys.filter((k) => lower.includes(k.toLowerCase()));
       if (found.length) hints.push(labelText + ":" + found.join(","));
-      // Capture tiny, redacted code windows around the most specific markers.
-      // These are static bundle snippets, not runtime URLs or token values.
-      for (const marker of ["hlsmod", "master.m3u8", "keys=", "keys:", "m3u8", "/api/"]) {
-        const at = lower.indexOf(marker.toLowerCase());
-        if (at < 0) continue;
-        let snippet = s.slice(Math.max(0, at - 105), Math.min(s.length, at + marker.length + 145));
-        snippet = snippet
-          .replace(/https?:\/\/[^"'\s]+/gi, "[URL]")
-          .replace(/([?&](?:token|key|sig|signature|expires|auth|v)=)[^&"'\s]*/gi, "$1[redacted]")
-          .replace(/[A-Za-z0-9_-]{48,}/g, "[long-value]")
-          .replace(/\s+/g, " ");
-        hints.push("ctx(" + marker + ")=" + snippet.slice(0, 240));
-      }
-      // Report literal API-like paths from the bundle; omit query strings and values.
+      // Report literal API-like paths before snippets so useful evidence survives log limits.
       const paths = [];
       const pathRe = /["'](\/(?:api|hlsmod|stream|video|player)[^"'\s]{0,100})["']/gi;
       let pm;
-      while ((pm = pathRe.exec(s)) && paths.length < 8) {
+      while ((pm = pathRe.exec(s)) && paths.length < 12) {
         const clean = pm[1].split("?")[0].replace(/[A-Za-z0-9_-]{28,}/g, "[id]");
         if (!paths.includes(clean)) paths.push(clean);
       }
-      if (paths.length) hints.push("paths=" + paths.join(","));
+      if (paths.length) hints.push(labelText + ":paths=" + paths.join(","));
+      // Minified bundles often contain an early CSS/library occurrence before actual player code.
+      // Scan multiple occurrences and prioritize playback/API markers; redact URLs and signed values.
+      let contextCount = 0;
+      for (const marker of ["master.m3u8", "application/vnd.apple.mpegurl", "/hlsmod/", "/api/", "getPlay", "m3u8", "hlsmod", "keys=", "keys:"]) {
+        let from = 0, occurrence = 0;
+        while (occurrence < 3 && contextCount < 10) {
+          const at = lower.indexOf(marker.toLowerCase(), from);
+          if (at < 0) break;
+          from = at + marker.length;
+          occurrence++;
+          let snippet = s.slice(Math.max(0, at - 150), Math.min(s.length, at + marker.length + 190));
+          snippet = snippet
+            .replace(/https?:\/\/[^"'\s]+/gi, "[URL]")
+            .replace(/([?&](?:token|key|sig|signature|expires|auth|v)=)[^&"'\s]*/gi, "$1[redacted]")
+            .replace(/[A-Za-z0-9_-]{48,}/g, "[long-value]")
+            .replace(/\s+/g, " ");
+          hints.push("ctx(" + marker + "#" + occurrence + ")=" + snippet.slice(0, 270));
+          contextCount++;
+        }
+        if (contextCount >= 10) break;
+      }
       const candidate = findDirectMedia(s);
       if (candidate) return candidate;
       return null;
