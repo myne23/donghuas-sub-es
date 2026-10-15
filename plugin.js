@@ -698,7 +698,7 @@ async function resolveManual(embed, site, label) {
       };
       const directVideo = (v) => typeof v.url === "string" && /^https:\/\//i.test(v.url) && /\.(?:mp4|webm)(?:[?#]|$)/i.test(v.url);
       videos.sort((a, b) => rank(a) - rank(b));
-      const streamHeaders = { Referer: embedUrl, Origin: "https://ok.ru" };
+      const streamHeaders = { Referer: embedUrl, Origin: "https://ok.ru", "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0 Safari/537.36" };
       // OK.ru puede llamar "ondemandHls" a una URL DASH .mpd. No clasificarla
       // por el nombre del campo: el protocolo real lo determina el manifiesto.
       const manifests = [];
