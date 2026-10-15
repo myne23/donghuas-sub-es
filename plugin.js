@@ -534,11 +534,11 @@ function decodeVoeConfig(encoded) {
   }
 }
 function parseOkruPlayerOptions(html) {
-  const tags = String(html || "").match(/<[^>]+\\bdata-options\\s*=\\s*(?:"[\\s\\S]*?"|'[\\s\\S]*?')[^>]*>/gi) || [];
+  const tags = String(html || "").match(/<[^>]+\bdata-options\s*=\s*(?:"[\s\S]*?"|'[\s\S]*?')[^>]*>/gi) || [];
   for (const tag of tags) {
-    const m = /\\bdata-options\\s*=\\s*(["'])([\\s\\S]*?)\\1/i.exec(tag);
+    const m = /\bdata-options\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag);
     if (!m) continue;
-    const raw = decode(m[2]).replace(/\\\\u0026/gi, "&").replace(/\\\\\\//g, "/");
+    const raw = decode(m[2]).replace(/\\u0026/gi, "&").replace(/\\\//g, "/");
     try { return JSON.parse(raw); } catch {}
     try { return JSON.parse(decode(raw)); } catch {}
   }
@@ -548,7 +548,7 @@ function parseOkruPlayerOptions(html) {
 async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
   let parsed;
   try { parsed = new URL(embedUrl); } catch { return null; }
-  const id = (parsed.pathname.match(/\\/embed\\/([a-z0-9_-]+)/i) || parsed.pathname.match(/\\/v([a-z0-9_-]+)\\/?$/i) || [])[1];
+  const id = (parsed.pathname.match(/\/embed\/([a-z0-9_-]+)/i) || parsed.pathname.match(/\/v([a-z0-9_-]+)\/?$/i) || [])[1];
   if (!id) return null;
   const apiUrl = "https://rumble.com/embedJS/u3/?request=video&v=" + encodeURIComponent(id);
   const r = await kino.fetch(apiUrl, {
@@ -563,13 +563,13 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
     if (depth > 10 || node == null) return;
     if (typeof node === "string") {
       const value = unescapePlayerText(node).trim();
-      if (!/^https?:\\/\\//i.test(value)) return;
+      if (!/^https?:\/\//i.test(value)) return;
       const hint = String(key || "").toLowerCase();
-      const hls = /hls|m3u8|mpegurl/.test(hint) || /\\.m3u8(?:[?#]|$)/i.test(value);
-      const webm = /webm/.test(hint) || /\\.webm(?:[?#]|$)/i.test(value);
-      const mp4 = /mp4|\\.mp4/i.test(hint) || /\\.mp4(?:[?#]|$)/i.test(value);
+      const hls = /hls|m3u8|mpegurl/.test(hint) || /\.m3u8(?:[?#]|$)/i.test(value);
+      const webm = /webm/.test(hint) || /\.webm(?:[?#]|$)/i.test(value);
+      const mp4 = /mp4|\.mp4/i.test(hint) || /\.mp4(?:[?#]|$)/i.test(value);
       if (hls || mp4 || webm) {
-        const quality = /(?:^|\\D)(2160|1440|1080|720|480|360|240)(?:\\D|$)/.exec(hint + " " + value);
+        const quality = /(?:^|\D)(2160|1440|1080|720|480|360|240)(?:\D|$)/.exec(hint + " " + value);
         candidates.push({ url: value, type: hls ? "hls" : webm ? "webm" : "mp4", quality: quality ? Number(quality[1]) : 0 });
       }
       return;
@@ -626,7 +626,7 @@ async function resolveManual(embed, site, label) {
     }
 
     if (host === "ok.ru" || host.endsWith(".ok.ru")) {
-      const id = (url.pathname.match(/\\/video(?:embed)?\\/(\\d+)/i) || [])[1];
+      const id = (url.pathname.match(/\/video(?:embed)?\/(\d+)/i) || [])[1];
       if (!id) return null;
       const embedUrl = "https://ok.ru/videoembed/" + id;
       const r = await kino.fetch(embedUrl, { headers: { ...headers, Referer: "https://ok.ru/" }, timeoutMs: 9000 });
@@ -654,43 +654,43 @@ async function resolveManual(embed, site, label) {
         if (/480|sd/.test(quality)) return 2;
         return 3;
       };
-      const directVideo = (v) => typeof v.url === "string" && /^https:\\/\\//i.test(v.url) && /\\.(?:mp4|webm)(?:[?#]|$)/i.test(v.url);
+      const directVideo = (v) => typeof v.url === "string" && /^https:\/\//i.test(v.url) && /\.(?:mp4|webm)(?:[?#]|$)/i.test(v.url);
       videos.sort((a, b) => rank(a) - rank(b));
       const streamHeaders = { Referer: "https://ok.ru/", Origin: "https://ok.ru" };
       const hls = metadata && (metadata.hlsMasterPlaylistUrl || metadata.hlsManifestUrl || metadata.ondemandHls || metadata.hlsMasterUrl);
       const direct = videos.find(directVideo);
       const alternatives = (selectedUrl) => videos.filter((v) => directVideo(v) && v.url !== selectedUrl).slice(0, 7).map((v) => ({
         url: v.url,
-        mime: /\\.webm(?:[?#]|$)/i.test(v.url) ? "video/webm" : "video/mp4",
+        mime: /\.webm(?:[?#]|$)/i.test(v.url) ? "video/webm" : "video/mp4",
         headers: streamHeaders,
         label: ("OK.ru · " + String(v.name || v.quality || "Video")).slice(0, 48)
       }));
       if (direct) {
         const stream = {
           url: direct.url,
-          mime: /\\.webm(?:[?#]|$)/i.test(direct.url) ? "video/webm" : "video/mp4",
+          mime: /\.webm(?:[?#]|$)/i.test(direct.url) ? "video/webm" : "video/mp4",
           headers: streamHeaders,
           label: ("OK.ru · " + String(direct.name || direct.quality || "Video")).slice(0, 48)
         };
         stream.alternatives = alternatives(direct.url);
-        if (typeof hls === "string" && /^https:\\/\\//i.test(hls) && hls !== direct.url) {
+        if (typeof hls === "string" && /^https:\/\//i.test(hls) && hls !== direct.url) {
           stream.alternatives.push({ url: hls, mime: "application/x-mpegURL", headers: streamHeaders, label: "OK.ru · HLS" });
         }
         if (!stream.alternatives.length) delete stream.alternatives;
         log("servidor " + label + ": video de OK.ru resuelto desde metadata");
         return stream;
       }
-      if (typeof hls === "string" && /^https:\\/\\//i.test(hls)) {
+      if (typeof hls === "string" && /^https:\/\//i.test(hls)) {
         const stream = { url: hls, mime: "application/x-mpegURL", headers: streamHeaders, label: "OK.ru · HLS" };
         stream.alternatives = alternatives(hls);
         if (!stream.alternatives.length) delete stream.alternatives;
         log("servidor " + label + ": HLS de OK.ru resuelto desde metadata");
         return stream;
       }
-      const other = videos.find((v) => typeof v.url === "string" && /^https:\\/\\//i.test(v.url));
+      const other = videos.find((v) => typeof v.url === "string" && /^https:\/\//i.test(v.url));
       if (other) {
         log("servidor " + label + ": URL de video de OK.ru resuelta desde metadata");
-        return directStream(other.url, label + " · " + site.name, "https://ok.ru/", /\\.webm(?:[?#]|$)/i.test(other.url) ? "video/webm" : "video/mp4");
+        return directStream(other.url, label + " · " + site.name, "https://ok.ru/", /\.webm(?:[?#]|$)/i.test(other.url) ? "video/webm" : "video/mp4");
       }
       return null;
     }
