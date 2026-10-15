@@ -749,19 +749,20 @@ async function resolveBysekoze(embed, site, label, headers) {
   const code = (inputUrl.pathname.match(/\/(?:e|embed|sovm9|boh)\/([a-z0-9_-]+)/i) || [])[1];
   if (!code) return null;
   // Follow the site's redirect first: Bysekoze commonly forwards to its rotating n1mwq.org origin.
+  const byseHeaders = { ...headers, "User-Agent": "Mozilla/5.0 (Linux; Android 6.0.1; SM-G5510 Build/MMB29M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.125 Mobile Safari/537.36 SamsungBrowser/7.2" };
   let pageResponse;
-  try { pageResponse = await kino.fetch(embed, { headers, timeoutMs: 9000 }); } catch { return null; }
+  try { pageResponse = await kino.fetch(embed, { headers: byseHeaders, timeoutMs: 9000 }); } catch { return null; }
   if (!pageResponse.ok) return null;
   let origin = inputUrl.origin;
   try { origin = new URL(pageResponse.url || embed).origin; } catch {}
   const pageUrl = pageResponse.url || embed;
   const pageHeaders = {
-    ...headers,
+    ...byseHeaders,
     Origin: origin,
     Referer: pageUrl,
     "X-Embed-Origin": new URL(site.base).origin,
     "X-Embed-Referer": site.base + "/",
-    "X-Embed-Parent": site.base + "/"
+    "X-Embed-Parent": embed
   };
   // If the redirect ends on the main site, use its embed API paths and keep the response's cookies.
   const embedMode = /\/(?:e|embed|sovm9|boh)\//i.test(new URL(pageUrl).pathname);
@@ -789,7 +790,7 @@ async function resolveBysekoze(embed, site, label, headers) {
       };
       const r = rand();
       const client = {
-        user_agent: headers["User-Agent"],
+        user_agent: byseHeaders["User-Agent"],
         architecture: "arm", bitness: "32", platform: "Android", platform_version: "6.0.1",
         model: "SM-G5510", ua_full_version: "59.0.3071.125",
         brand_full_versions: [{ brand: "SamsungBrowser", version: "7.2" }],
