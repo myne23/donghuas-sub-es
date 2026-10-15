@@ -325,7 +325,13 @@ export async function search(query) {
     safe("buscar-sd", async () => unique(sdCards(await getPage(SD, "/buscar.php?s=" + encodeURIComponent(q))).filter((c) => !c.episode).map(sdItem))),
     safe("buscar-md", async () => unique(mdCards(await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(q))).filter((c) => !c.episode).map(mdItem))),
   ]);
-  return (a || []).concat(b || []).slice(0, 100);
+  // Global search may not make item badges prominent in every Kino layout, so make the source
+  // unmistakable in the result title too. Keep the canonical title inside episodes() metadata.
+  const markSource = (items, source) => (items || []).map((item) => ({
+    ...item,
+    title: "[" + source + "] " + item.title,
+  }));
+  return markSource(a, SD.name).concat(markSource(b, MD.name)).slice(0, 100);
 }
 
 // ---------- episodes ----------
