@@ -555,9 +555,15 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
     headers: { Accept: "application/json,text/plain,*/*", Referer: embedUrl, "User-Agent": userAgent },
     timeoutMs: 9000
   });
-  if (!r.ok) return null;
+  if (!r.ok) {
+    log("servidor " + label + ": API de Rumble respondió HTTP " + r.status);
+    return null;
+  }
   let data;
-  try { data = r.json(); } catch { try { data = JSON.parse(r.text()); } catch { return null; } }
+  try { data = r.json(); } catch { try { data = JSON.parse(r.text()); } catch {
+    log("servidor " + label + ": respuesta JSON inválida de Rumble");
+    return null;
+  } }
   const candidates = [];
   // Rumble nests stream URLs under ua.hls.url / ua.mp4.<quality>.url.
   // Preserve the parent format hint while descending; otherwise the leaf key
@@ -590,7 +596,10 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
     return rank(a) - rank(b) || b.quality - a.quality;
   });
   const chosen = uniqueCandidates[0];
-  if (!chosen) return null;
+  if (!chosen) {
+    log("servidor " + label + ": la API de Rumble no expuso una URL HLS/MP4/WebM reconocible");
+    return null;
+  }
   const mime = chosen.type === "hls" ? "application/x-mpegURL" : chosen.type === "webm" ? "video/webm" : "video/mp4";
   log("servidor " + label + ": fuente de Rumble resuelta directamente (" + chosen.type.toUpperCase() + ")");
   return directStream(chosen.url, label + " · " + site.name, embedUrl, mime);
@@ -634,14 +643,20 @@ async function resolveManual(embed, site, label) {
       if (!id) return null;
       const embedUrl = "https://ok.ru/videoembed/" + id;
       const r = await kino.fetch(embedUrl, { headers: { ...headers, Referer: "https://ok.ru/" }, timeoutMs: 9000 });
-      if (!r.ok) return null;
+      if (!r.ok) {
+        log("servidor " + label + ": OK.ru respondió HTTP " + r.status);
+        return null;
+      }
       // Parse data-options from the original HTML. Decoding &quot; across the
       // whole page first can turn escaped attribute quotes into delimiters and
       // truncate the tag before JSON.parse ever sees the metadata.
       const html = r.text();
       const player = parseOkruPlayerOptions(html);
       const flashvars = player && player.flashvars;
-      if (!flashvars) return null;
+      if (!flashvars) {
+        log("servidor " + label + ": no se encontró flashvars en data-options de OK.ru");
+        return null;
+      }
       let metadata = flashvars.metadata;
       if (typeof metadata === "string") {
         try { metadata = JSON.parse(decode(metadata)); } catch { metadata = null; }
