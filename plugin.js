@@ -665,7 +665,12 @@ async function resolveManual(embed, site, label) {
   }
   const headers = { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0 Safari/537.36", Referer: embed };
   try {
-    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") || host === "strp2p.com" || host.endsWith(".strp2p.com")) {
+    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") ||
+        host === "strp2p.com" || host.endsWith(".strp2p.com") ||
+        host === "vidhidepro.com" || host.endsWith(".vidhidepro.com") ||
+        host === "embedwish.com" || host.endsWith(".embedwish.com")) {
+      // Try HTTP extraction first. VidHidePro and Embedwish still fall back to browser capture
+      // when no source is exposed; Byse and sp2p are intentionally HTTP-only.
       return await resolvePageMedia(embed, site, label, headers);
     }
 
