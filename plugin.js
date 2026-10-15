@@ -764,7 +764,7 @@ async function resolveBysekoze(embed, site, label, headers) {
     "X-Embed-Parent": site.base + "/"
   };
   // If the redirect ends on the main site, use its embed API paths and keep the response's cookies.
-  const embedMode = /\/(?:embed|sovm9|boh)\//i.test(new URL(pageUrl).pathname);
+  const embedMode = /\/(?:e|embed|sovm9|boh)\//i.test(new URL(pageUrl).pathname);
   const prefix = "/api/videos/" + code + (embedMode ? "/embed" : "");
   const getJson = async (path, opts) => {
     const r = await kino.fetch(origin + path, { headers: pageHeaders, timeoutMs: 12000, ...(opts || {}) });
