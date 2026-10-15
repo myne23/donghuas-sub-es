@@ -194,6 +194,29 @@ test("resolve (MundoDonghua): reads the player address out of the packed script"
   });
 });
 
+test("resolve (Dailymotion): uses the direct stream API without browser capture", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: { url: "https://cdn.example/master.m3u8" } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, "https://cdn.example/master.m3u8");
+    assert.equal(stream.mime, "application/x-mpegURL");
+    assert.deepEqual(captured, []);
+  });
+});
+
+test("resolve (OK.ru): uses the direct HLS URL after Dailymotion fails", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://ok.ru/videoembed/9": String.raw`{"hlsManifestUrl":"https://cdn.example/ok.m3u8"}`,
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, "https://cdn.example/ok.m3u8");
+    assert.equal(stream.mime, "application/x-mpegURL");
+    assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1"]);
+  });
+});
+
 test("resolve fails with a message for the person when no server gives video", async () => {
   await withKino({ "https://seriesdonghua.com/gu-an-episodio-1/": SD_EPISODE.replace(/OK\.ru/, "Dailymotion") }, async (plugin) => {
     await assert.rejects(plugin.resolve("srv:0:sd:/gu-an-episodio-1/"), (e) => e.code === "unavailable" && /servidor/.test(e.userMessage));
