@@ -219,6 +219,22 @@ test("resolve (OK.ru): reads player metadata and prefers a direct video with req
   });
 });
 
+test("resolve (OK.ru): classifies ondemandHls .mpd as DASH, not HLS", async () => {
+  const mpd = "https://cdn.example/dash4_9.signed.mpd";
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[],"ondemandHls":"${mpd}"}}}'></div>`,
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, mpd);
+    assert.equal(stream.mime, "application/dash+xml");
+    assert.equal(stream.label, "OK.ru · DASH");
+    assert.equal(stream.headers.Referer, "https://ok.ru/");
+    assert.equal(stream.headers.Origin, "https://ok.ru");
+    assert.deepEqual(captured, []);
+  });
+});
+
 test("resolve (Rumble): reads its public embedJS API without browser capture", async () => {
   await withKino({
     "https://rumble.com/embedJS/u3/?request=video&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
