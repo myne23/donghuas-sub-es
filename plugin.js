@@ -565,6 +565,17 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
     return null;
   } }
   const candidates = [];
+  const shape = [];
+  const noteShape = (node, path, depth) => {
+    if (depth > 4 || node == null || typeof node !== "object") return;
+    for (const [key, value] of Object.entries(node)) {
+      const next = path ? path + "." + key : key;
+      if (/(?:hls|mp4|webm|url|stream|ua)/i.test(key)) shape.push(next + ":" + (Array.isArray(value) ? "array" : value === null ? "null" : typeof value));
+      if (shape.length < 35 && typeof value === "object") noteShape(value, next, depth + 1);
+      if (shape.length >= 35) return;
+    }
+  };
+  noteShape(data, "", 0);
   // Rumble nests stream URLs under ua.hls.url / ua.mp4.<quality>.url.
   // Preserve the parent format hint while descending; otherwise the leaf key
   // is only "url" and a valid stream is incorrectly discarded.
@@ -597,7 +608,7 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
   });
   const chosen = uniqueCandidates[0];
   if (!chosen) {
-    log("servidor " + label + ": la API de Rumble no expuso una URL HLS/MP4/WebM reconocible");
+    log("servidor " + label + ": la API de Rumble no expuso una URL HLS/MP4/WebM reconocible; estructura=" + JSON.stringify(shape).slice(0, 900));
     return null;
   }
   const mime = chosen.type === "hls" ? "application/x-mpegURL" : chosen.type === "webm" ? "video/webm" : "video/mp4";
@@ -669,6 +680,12 @@ async function resolveManual(embed, site, label) {
         } catch (e) { log("servidor " + label + ": no se pudieron leer metadatos de OK.ru"); }
       }
       const videos = metadata && Array.isArray(metadata.videos) ? metadata.videos.slice() : [];
+      const metadataShape = metadata && typeof metadata === "object" ? Object.keys(metadata).slice(0, 30) : [];
+      const videoSummary = videos.slice(0, 12).map((v) => ({
+        name: String(v.name || v.quality || "").slice(0, 20),
+        url: typeof v.url === "string" ? (() => { try { const u = new URL(v.url); return { host: u.hostname, path: u.pathname.slice(-28), extension: /\\.(m3u8|mp4|webm)$/i.exec(u.pathname)?.[1] || "none" }; } catch { return { invalid: true }; } })() : typeof v.url
+      }));
+      log("servidor " + label + ": metadatos OK.ru keys=" + JSON.stringify(metadataShape) + " videos=" + JSON.stringify(videoSummary).slice(0, 850));
       const rank = (v) => {
         const quality = String(v.name || v.quality || "").toLowerCase();
         if (/1080|full/.test(quality)) return 0;
@@ -676,7 +693,9 @@ async function resolveManual(embed, site, label) {
         if (/480|sd/.test(quality)) return 2;
         return 3;
       };
-      const directVideo = (v) => typeof v.url === "string" && /^https:\/\//i.test(v.url) && /\.(?:mp4|webm)(?:[?#]|$)/i.test(v.url);
+      // Algunos CDN de OK.ru entregan MP4 con URL firmada sin extensión visible.
+      // Si el objeto está dentro de metadata.videos, la URL sigue siendo una fuente de video.
+      const directVideo = (v) => typeof v.url === "string" && /^https:\/\//i.test(v.url) && !/\.m3u8(?:[?#]|$)/i.test(v.url) && !/\.mpd(?:[?#]|$)/i.test(v.url);
       videos.sort((a, b) => rank(a) - rank(b));
       const streamHeaders = { Referer: "https://ok.ru/", Origin: "https://ok.ru" };
       const hls = metadata && (metadata.hlsMasterPlaylistUrl || metadata.hlsManifestUrl || metadata.ondemandHls || metadata.hlsMasterUrl);
