@@ -878,15 +878,31 @@ async function capture(site, server) {
     log("servidor " + server.name + ": no dio la dirección del reproductor");
     return null;
   }
-  if (!embed || !embedAllowed(embed)) {
-    log("servidor " + server.name + ": reproductor no admitido");
+  if (!embed) {
+    log("servidor " + server.name + ": dirección del reproductor vacía");
+    return null;
+  }
+  if (!embedAllowed(embed)) {
+    let where = "host desconocido";
+    try {
+      const u = new URL(embed);
+      where = u.hostname + u.pathname.slice(0, 80);
+    } catch {}
+    log("servidor " + server.name + ": reproductor no admitido (" + where + ")");
     return null;
   }
   const manual = await resolveManual(embed, site, server.name);
   if (manual) return manual;
   let res;
   try {
-    res = await kino.browser.capture(embed, { timeoutMs: CAPTURE_MS, headers: { Referer: site.base + "/" } });
+    // MundoDonghua sometimes wraps Filemoon behind bysekoze; don't let a blank
+    // wrapper consume the full 20 s before trying the next useful source.
+    let captureTimeout = CAPTURE_MS;
+    try {
+      const host = new URL(embed).hostname.toLowerCase();
+      if (host === "bysekoze.com" || host.endsWith(".bysekoze.com")) captureTimeout = 8000;
+    } catch {}
+    res = await kino.browser.capture(embed, { timeoutMs: captureTimeout, headers: { Referer: site.base + "/" } });
   } catch (e) {
     log("servidor " + server.name + ": " + ((e && e.code) || "error") + " al abrir el reproductor");
     return null;
