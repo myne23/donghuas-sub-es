@@ -249,6 +249,7 @@ test("resolve (OK.ru): prefers HLS when both HLS and DASH manifests are present"
     assert.equal(stream.label, "OK.ru · HLS");
     assert.equal(stream.headers.Referer, "https://ok.ru/videoembed/9");
     assert.equal(stream.headers.Origin, "https://ok.ru");
+    assert.match(stream.headers["User-Agent"], /Mozilla\/5\.0/);
     assert.deepEqual(captured, []);
     assert.ok(stream.alternatives.some((item) => item.url === mpd && item.mime === "application/dash+xml"));
     assert.ok(logs.some((line) => line.includes('"extension":"mpd"') && line.includes('"confirmedExtension":true')));
