@@ -1,7 +1,7 @@
 {
   "id": "donghuas-sub-es",
   "name": "Donghuas Sub ES",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Donghuas (animación china) subtitulados al español, de SeriesDonghua y MundoDonghua. Últimos episodios y catálogo de cada página. No pide cuenta.",
@@ -34,7 +34,9 @@
     "vidhidepro.com",
     "*.vidhidepro.com",
     "embedwish.com",
-    "*.embedwish.com"
+    "*.embedwish.com",
+    "strp2p.com",
+    "*.strp2p.com"
   ],
   "browser": true,
   "streamHosts": "any",
