@@ -14,8 +14,8 @@ Pruebas sin conexión: `node --test test/plugin.test.mjs`. Validar: `node sdk/va
 El código de `sdk/`, `contract.json` y `kino.d.ts` viene de las plantillas de Kino (Apache 2.0, ver LICENSE y NOTICE).
 
 
-### Resolución directa de servidores (0.1.2)
+### Resolución directa de servidores (0.1.5)
 
-- **OK.ru:** lee las opciones del reproductor y sus metadatos, selecciona primero un video MP4/WebM compatible y conserva las cabeceras de origen; deja HLS como alternativa cuando está disponible.
-- **Rumble:** consulta el endpoint público `embedJS` y prioriza el manifiesto HLS, evitando la captura del navegador cuando el proveedor entrega una URL directa.
+- **OK.ru:** lee las opciones del reproductor y sus metadatos, prioriza el manifiesto HLS de los metadatos y solo usa MP4/WebM cuando la URL de video es reconocible; conserva las cabeceras de origen.
+- **Rumble:** consulta `embedJS` con `ver=2` y busca las fuentes HLS/MP4/WebM en la estructura de respuesta; si no aparecen, conserva la captura del navegador como respaldo.
 - Si el resolver directo no obtiene una fuente compatible, se conserva el mecanismo de captura de Kino como respaldo.
