@@ -696,27 +696,25 @@ async function resolvePageMedia(embed, site, label, headers) {
         if (!paths.includes(clean)) paths.push(clean);
       }
       if (paths.length) hints.push(labelText + ":paths=" + paths.join(","));
-      const contextMarkers = ["/api/v1/player", "/api/v1/video", "/api/v1/info", "/api/v1/download", "getPlay", "master.m3u8", "/hlsmod/", "keys="];
+      // Wider windows around code that constructs the sp2p player request.
+      // Keep endpoint/property names but redact signed query values and opaque tokens.
+      const contextMarkers = ["/api/v1/player?t=", "httpStream", "__p2pDynCfg", "capacityTokenExpire", "/api/v1/video?id=", "/api/v1/info?id=", "videoId", "getPlay", "/hlsmod/"];
+      const contextSeen = new Set();
       let contextCount = 0;
       for (const marker of contextMarkers) {
-        let from = 0, occurrence = 0;
-        while (occurrence < 2 && contextCount < 7) {
-          const at = lower.indexOf(marker.toLowerCase(), from);
-          if (at < 0) break;
-          from = at + marker.length;
-          occurrence++;
-          // Skip a likely CSS/library-only first hit for generic HLS markers; API paths keep their first hit.
-          if (occurrence === 1 && !marker.startsWith("/api/") && marker !== "getPlay" && marker !== "master.m3u8" && marker !== "keys=") continue;
-          let snippet = s.slice(Math.max(0, at - 180), Math.min(s.length, at + marker.length + 220));
-          snippet = snippet
-            .replace(/https?:\/\/[^"'\s]+/gi, "[URL]")
-            .replace(/([?&](?:token|key|sig|signature|expires|auth|v)=)[^&"'\s]*/gi, "$1[redacted]")
-            .replace(/[A-Za-z0-9_-]{48,}/g, "[long-value]")
-            .replace(/\s+/g, " ");
-          hints.push("ctx(" + marker + "#" + occurrence + ")=" + snippet.slice(0, 260));
-          contextCount++;
-        }
-        if (contextCount >= 7) break;
+        const at = lower.indexOf(marker.toLowerCase());
+        if (at < 0 || contextSeen.has(marker) || contextCount >= 7) continue;
+        contextSeen.add(marker);
+        let snippet = s.slice(Math.max(0, at - 360), Math.min(s.length, at + marker.length + 520));
+        snippet = snippet
+          .replace(/([?&](?:token|key|keys|sig|signature|expires|auth|capacityToken|capacityTokenExpire|t)=)[^&"'\\s]*/gi, "$1[redacted]")
+          .replace(/https?:\\/\\/[^"'\\s]+/gi, (url) => {
+            try { const u = new URL(url); return u.origin + u.pathname; } catch { return "[URL]"; }
+          })
+          .replace(/[A-Za-z0-9_-]{64,}/g, "[long-value]")
+          .replace(/\\s+/g, " ");
+        hints.push("ctx(" + marker + ")=" + snippet.slice(0, 850));
+        contextCount++;
       }
       const candidate = findDirectMedia(s);
       if (candidate) return candidate;
@@ -740,7 +738,7 @@ async function resolvePageMedia(embed, site, label, headers) {
       if (media) break;
     }
     log("diagnóstico sp2p estático: scripts=" + scriptRefs.map((s) => (s.sameOrigin ? "local:" : "externo:") + s.host + s.path).slice(0, 8).join("|") +
-      "; inspeccionados=" + inspected.join("|") + "; pistas=" + hints.slice(0, 10).join("|").slice(0, 1450));
+      "; inspeccionados=" + inspected.join("|") + "; pistas=" + hints.slice(0, 12).join("|").slice(0, 3600));
   }
   if (!media) {
     log("servidor " + label + ": HTML/JS estático no expuso URL HLS/MP4");
