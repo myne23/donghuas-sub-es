@@ -699,21 +699,26 @@ async function resolveManual(embed, site, label) {
       const directVideo = (v) => typeof v.url === "string" && /^https:\/\//i.test(v.url) && /\.(?:mp4|webm)(?:[?#]|$)/i.test(v.url);
       videos.sort((a, b) => rank(a) - rank(b));
       const streamHeaders = { Referer: "https://ok.ru/", Origin: "https://ok.ru" };
-      // Prefer the actual HLS manifest. A videos[].url value can be a CDN base URL,
-      // not a playable media file, even when it is HTTPS.
-      const hlsUrls = [];
-      const collectHls = (node, key, depth) => {
+      // OK.ru puede llamar "ondemandHls" a una URL DASH .mpd. No clasificarla
+      // por el nombre del campo: el protocolo real lo determina el manifiesto.
+      const manifests = [];
+      const collectManifests = (node, key, depth) => {
         if (depth > 8 || node == null) return;
         if (typeof node === "string") {
           const value = node.replace(/\\u0026/gi, "&").replace(/\\\\\//g, "/").trim();
-          if (/^https:\/\//i.test(value) && (/\.m3u8(?:[?#]|$)/i.test(value) || /hls|ondemand/i.test(key))) hlsUrls.push(value);
+          if (!/^https:\/\//i.test(value)) return;
+          let pathname = "";
+          try { pathname = new URL(value).pathname; } catch { return; }
+          if (/\.mpd$/i.test(pathname)) manifests.push({ url: value, kind: "dash" });
+          else if (/\.m3u8$/i.test(pathname)) manifests.push({ url: value, kind: "hls" });
+          else if (/hls|ondemand/i.test(key)) manifests.push({ url: value, kind: "hls" });
           return;
         }
-        if (Array.isArray(node)) { for (const item of node) collectHls(item, key, depth + 1); return; }
-        if (typeof node === "object") for (const [childKey, value] of Object.entries(node)) collectHls(value, key + "." + childKey, depth + 1);
+        if (Array.isArray(node)) { for (const item of node) collectManifests(item, key, depth + 1); return; }
+        if (typeof node === "object") for (const [childKey, value] of Object.entries(node)) collectManifests(value, key + "." + childKey, depth + 1);
       };
-      for (const key of ["hlsMasterPlaylistUrl", "hlsManifestUrl", "ondemandHls", "hlsMasterUrl"]) collectHls(metadata && metadata[key], key, 0);
-      const hls = hlsUrls.find((value) => /^https:\/\//i.test(value));
+      for (const key of ["hlsMasterPlaylistUrl", "hlsManifestUrl", "ondemandHls", "hlsMasterUrl"]) collectManifests(metadata && metadata[key], key, 0);
+      const manifest = manifests.find((item) => item.kind === "dash") || manifests.find((item) => item.kind === "hls");
       const direct = videos.find(directVideo);
       const alternatives = (selectedUrl) => videos.filter((v) => directVideo(v) && v.url !== selectedUrl).slice(0, 7).map((v) => ({
         url: v.url,
@@ -721,11 +726,13 @@ async function resolveManual(embed, site, label) {
         headers: streamHeaders,
         label: ("OK.ru · " + String(v.name || v.quality || "Video")).slice(0, 48)
       }));
-      if (hls) {
-        const stream = { url: hls, mime: "application/x-mpegURL", headers: streamHeaders, label: "OK.ru · HLS" };
-        stream.alternatives = alternatives(hls);
+      if (manifest) {
+        const dash = manifest.kind === "dash";
+        const mime = dash ? "application/dash+xml" : "application/x-mpegURL";
+        const stream = { url: manifest.url, mime, headers: streamHeaders, label: dash ? "OK.ru · DASH" : "OK.ru · HLS" };
+        stream.alternatives = alternatives(manifest.url);
         if (!stream.alternatives.length) delete stream.alternatives;
-        log("servidor " + label + ": HLS de OK.ru resuelto desde metadata");
+        log("servidor " + label + ": manifiesto " + (dash ? "DASH (.mpd)" : "HLS (.m3u8)") + " de OK.ru resuelto desde metadata");
         return stream;
       }
       if (direct) {
