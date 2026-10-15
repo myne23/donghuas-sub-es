@@ -15,7 +15,7 @@ const SD = { key: "sd", name: "SeriesDonghua", base: "https://seriesdonghua.com"
 const MD = { key: "md", name: "MundoDonghua", base: "https://www.mundodonghua.com" };
 
 // Players the sites embed. kino.browser.capture only starts on a declared host.
-const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "vidhidepro.com", "embedwish.com", "strp2p.com"];
+const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "n1mwq.org", "vidhidepro.com", "embedwish.com", "strp2p.com"];
 const MD_SERVER_NAMES = { fmoon: "Filemoon", amagi: "Voe", vhide: "VidHide", swish: "StreamWish" };
 
 const CAPTURE_MS = 20000;
