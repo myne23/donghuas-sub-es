@@ -940,11 +940,12 @@ async function capture(site, server) {
   }
   const manual = await resolveManual(embed, site, server.name);
   if (manual) return manual;
-  // These hosts are HTTP-only: do not launch Kino's hidden browser if direct parsing fails.
+  // sp2p stays HTTP-only. Byse/Filemoon now falls back to capture because its
+  // player obtains the signed HLS URL through an encrypted playback API after JS runs.
   try {
     const host = new URL(embed).hostname.toLowerCase();
-    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") || host === "strp2p.com" || host.endsWith(".strp2p.com")) {
-      log("servidor " + server.name + ": no se pudo resolver por HTTP directo; se omite captura de navegador");
+    if (host === "strp2p.com" || host.endsWith(".strp2p.com")) {
+      log("servidor " + server.name + ": no se pudo resolver por HTTP directo; sp2p omite captura de navegador");
       return null;
     }
   } catch {}
