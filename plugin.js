@@ -15,7 +15,7 @@ const SD = { key: "sd", name: "SeriesDonghua", base: "https://seriesdonghua.com"
 const MD = { key: "md", name: "MundoDonghua", base: "https://www.mundodonghua.com" };
 
 // Players the sites embed. kino.browser.capture only starts on a declared host.
-const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "vidhidepro.com", "embedwish.com"];
+const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "vidhidepro.com", "embedwish.com", "strp2p.com"];
 const MD_SERVER_NAMES = { fmoon: "Filemoon", amagi: "Voe", vhide: "VidHide", swish: "StreamWish" };
 
 const CAPTURE_MS = 20000;
@@ -616,6 +616,44 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
   return directStream(chosen.url, label + " · " + site.name, embedUrl, mime);
 }
 
+// Extract HLS/MP4/DASH URLs from ordinary HTML or packed player scripts without a browser.
+function findDirectMedia(html) {
+  const candidates = [];
+  const add = (text) => {
+    const clean = unescapePlayerText(text).replace(/\\u0026/gi, "&").replace(/\\\//g, "/");
+    const re = /https?:\/\/[^"'<>\\\s]+?\.(?:m3u8|mp4|mpd)(?:\?[^"'<>\\\s]*)?/gi;
+    let m;
+    while ((m = re.exec(clean))) {
+      const raw = m[0].replace(/[),;]+$/, "");
+      try {
+        const u = new URL(raw);
+        if (u.protocol === "https:") candidates.push({ url: u.href, hls: /\.m3u8(?:$|\?)/i.test(u.href), dash: /\.mpd(?:$|\?)/i.test(u.href) });
+      } catch {}
+    }
+  };
+  add(String(html || ""));
+  for (const unpacked of unpackAll(String(html || ""))) add(unpacked);
+  return candidates.find((x) => x.hls) || candidates.find((x) => !x.dash) || candidates[0] || null;
+}
+
+async function resolvePageMedia(embed, site, label, headers) {
+  let response;
+  try {
+    response = await kino.fetch(embed, { headers: { ...headers, Referer: site.base + "/" }, timeoutMs: 9000 });
+  } catch { return null; }
+  if (!response.ok) {
+    log("servidor " + label + ": página del reproductor respondió HTTP " + response.status);
+    return null;
+  }
+  const media = findDirectMedia(response.text());
+  if (!media) {
+    log("servidor " + label + ": HTML consultado directamente; no expuso URL HLS/MP4");
+    return null;
+  }
+  log("servidor " + label + ": URL " + (media.hls ? "HLS" : media.dash ? "DASH" : "MP4") + " extraída sin navegador");
+  return directStream(media.url, label + " · " + site.name, embed, media.hls ? "application/x-mpegURL" : media.dash ? "application/dash+xml" : "video/mp4");
+}
+
 async function resolveManual(embed, site, label) {
   let host = "";
   let url;
@@ -627,6 +665,10 @@ async function resolveManual(embed, site, label) {
   }
   const headers = { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0 Safari/537.36", Referer: embed };
   try {
+    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") || host === "strp2p.com" || host.endsWith(".strp2p.com")) {
+      return await resolvePageMedia(embed, site, label, headers);
+    }
+
     if (host === "dailymotion.com" || host.endsWith(".dailymotion.com")) {
       const id = (url.searchParams.get("video") || (url.pathname.match(/\/video\/([A-Za-z0-9]+)/) || [])[1] || "").trim();
       if (!id) return null;
@@ -893,16 +935,17 @@ async function capture(site, server) {
   }
   const manual = await resolveManual(embed, site, server.name);
   if (manual) return manual;
+  // These hosts are HTTP-only: do not launch Kino's hidden browser if direct parsing fails.
+  try {
+    const host = new URL(embed).hostname.toLowerCase();
+    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") || host === "strp2p.com" || host.endsWith(".strp2p.com")) {
+      log("servidor " + server.name + ": no se pudo resolver por HTTP directo; se omite captura de navegador");
+      return null;
+    }
+  } catch {}
   let res;
   try {
-    // MundoDonghua sometimes wraps Filemoon behind bysekoze; don't let a blank
-    // wrapper consume the full 20 s before trying the next useful source.
-    let captureTimeout = CAPTURE_MS;
-    try {
-      const host = new URL(embed).hostname.toLowerCase();
-      if (host === "bysekoze.com" || host.endsWith(".bysekoze.com")) captureTimeout = 8000;
-    } catch {}
-    res = await kino.browser.capture(embed, { timeoutMs: captureTimeout, headers: { Referer: site.base + "/" } });
+    res = await kino.browser.capture(embed, { timeoutMs: CAPTURE_MS, headers: { Referer: site.base + "/" } });
   } catch (e) {
     log("servidor " + server.name + ": " + ((e && e.code) || "error") + " al abrir el reproductor");
     return null;
