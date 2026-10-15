@@ -860,8 +860,32 @@ async function resolveBysekoze(embed, site, label, headers) {
     const chosen = candidates.find((x) => /^https?:\/\//i.test(x.url)) || candidates[0];
     if (!chosen) throw new Error("fuentes sin URL");
     const streamUrl = new URL(chosen.url, origin + "/").href;
-    log("servidor " + label + ": Bysekoze resolvió " + chosen.label.slice(0, 32));
-    return directStream(streamUrl, (chosen.label + " · " + site.name).slice(0, 48), origin + "/", /\.m3u8(?:$|[?#])/i.test(streamUrl) ? "application/x-mpegURL" : "video/mp4");
+    let streamHost = "host desconocido";
+    let streamPath = "/";
+    try {
+      const u = new URL(streamUrl);
+      streamHost = u.hostname;
+      streamPath = u.pathname.slice(0, 90);
+    } catch {}
+    log("servidor " + label + ": Bysekoze entregó " + chosen.label.slice(0, 24) + " (" + streamHost + streamPath + ")");
+    // Playback URLs can be bound to the embed origin and browser fingerprint.
+    // Pass the same browser identity and embed referer to the player for the
+    // manifest and every child playlist/segment request.
+    const streamHeaders = {
+      "User-Agent": byseHeaders["User-Agent"],
+      Referer: pageUrl,
+      Origin: origin,
+      "X-Embed-Origin": new URL(site.base).origin,
+      "X-Embed-Referer": site.base + "/",
+      "X-Embed-Parent": embed
+    };
+    return {
+      url: streamUrl,
+      label: (chosen.label + " · " + site.name).slice(0, 48),
+      headers: streamHeaders,
+      mime: /\.m3u8(?:$|[?#])/i.test(streamUrl) ? "application/x-mpegURL" : /\.mpd(?:$|[?#])/i.test(streamUrl) ? "application/dash+xml" : "video/mp4",
+      expiresInSeconds: 300
+    };
   } catch (e) {
     log("servidor " + label + ": Bysekoze HTTP no completó la resolución (" + String(e && e.message || e).slice(0, 80) + ")");
     return null;
