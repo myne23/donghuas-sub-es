@@ -610,7 +610,7 @@ async function resolveManual(embed, site, label) {
         const cr = await kino.fetch(challengeUrl, { headers: { "User-Agent": headers["User-Agent"], Referer: realUrl }, timeoutMs: 15000 });
         if (!cr.ok) return null;
         const cj = cr.json();
-        const algorithm = String(cj.algorithm || "").toLowerCase();
+        const algorithm = String(cj.algorithm || "").toLowerCase().replace(/-/g, "");
         const cost = Number(cj.cost), keyLength = Number(cj.keyLength);
         const keyPrefix = String(cj.keyPrefix || ""), nonce = String(cj.nonce || ""), salt = String(cj.salt || "");
         if (!algorithm.includes("sha256") || !Number.isInteger(cost) || cost < 1 || cost > 100000 ||
