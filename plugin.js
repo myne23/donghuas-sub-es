@@ -619,6 +619,7 @@ async function resolveRumbleDirect(embedUrl, site, label, userAgent) {
 // Extract HLS/MP4/DASH URLs from ordinary HTML or packed player scripts without a browser.
 function findDirectMedia(html) {
   const candidates = [];
+  const seen = new Set();
   const add = (text) => {
     const clean = unescapePlayerText(text).replace(/\\u0026/gi, "&").replace(/\\\//g, "/");
     const re = /https?:\/\/[^"'<>\\\s]+?\.(?:m3u8|mp4|mpd)(?:\?[^"'<>\\\s]*)?/gi;
@@ -627,20 +628,34 @@ function findDirectMedia(html) {
       const raw = m[0].replace(/[),;]+$/, "");
       try {
         const u = new URL(raw);
-        if (u.protocol === "https:") candidates.push({ url: u.href, hls: /\.m3u8(?:$|\?)/i.test(u.href), dash: /\.mpd(?:$|\?)/i.test(u.href) });
+        if (u.protocol !== "https:" || seen.has(u.href)) continue;
+        seen.add(u.href);
+        const path = u.pathname.toLowerCase();
+        const hls = /\.m3u8(?:$|\?)/i.test(u.href);
+        const dash = /\.mpd(?:$|\?)/i.test(u.href);
+        // Prefer a master playlist when the page exposes multiple media URLs.
+        const score = (hls ? 30 : dash ? 10 : 0) +
+          (/master|master_playlist|playlist_master/i.test(path) ? 100 : 0) +
+          (/index|playlist|manifest/i.test(path) ? 15 : 0);
+        candidates.push({ url: u.href, hls, dash, score });
       } catch {}
     }
   };
   add(String(html || ""));
   for (const unpacked of unpackAll(String(html || ""))) add(unpacked);
-  return candidates.find((x) => x.hls) || candidates.find((x) => !x.dash) || candidates[0] || null;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0] || null;
 }
 
 async function resolvePageMedia(embed, site, label, headers) {
+  const started = Date.now();
   let response;
   try {
     response = await kino.fetch(embed, { headers: { ...headers, Referer: site.base + "/" }, timeoutMs: 9000 });
-  } catch { return null; }
+  } catch (e) {
+    log("servidor " + label + ": error consultando embed (" + String(e && e.message || e).slice(0, 70) + ")");
+    return null;
+  }
   if (!response.ok) {
     log("servidor " + label + ": página del reproductor respondió HTTP " + response.status);
     return null;
@@ -650,10 +665,21 @@ async function resolvePageMedia(embed, site, label, headers) {
     log("servidor " + label + ": HTML consultado directamente; no expuso URL HLS/MP4");
     return null;
   }
-  log("servidor " + label + ": URL " + (media.hls ? "HLS" : media.dash ? "DASH" : "MP4") + " extraída sin navegador");
-  return directStream(media.url, label + " · " + site.name, embed, media.hls ? "application/x-mpegURL" : media.dash ? "application/dash+xml" : "video/mp4");
+  const isVidHide = (() => {
+    try { const h = new URL(embed).hostname.toLowerCase(); return h === "vidhidepro.com" || h.endsWith(".vidhidepro.com"); } catch { return false; }
+  })();
+  const stream = directStream(media.url, label + " · " + site.name, embed,
+    media.hls ? "application/x-mpegURL" : media.dash ? "application/dash+xml" : "video/mp4");
+  if (stream && isVidHide) {
+    // Keep the same browser identity for VidHide's manifest and segment requests.
+    stream.headers = { "User-Agent": headers["User-Agent"], Referer: embed };
+  }
+  let sourceHost = "host desconocido", sourcePath = "/";
+  try { const u = new URL(media.url); sourceHost = u.hostname; sourcePath = u.pathname.slice(0, 80); } catch {}
+  log("servidor " + label + ": URL " + (media.hls ? "HLS" : media.dash ? "DASH" : "MP4") +
+    " extraída sin navegador en " + (Date.now() - started) + " ms (" + sourceHost + sourcePath + ")");
+  return stream;
 }
-
 
 // ---------- Bysekoze / n1mwq encrypted playback API ----------
 function b64urlToBytes(value) {
