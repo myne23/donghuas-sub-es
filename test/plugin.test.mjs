@@ -221,7 +221,7 @@ test("resolve (OK.ru): reads player metadata and prefers a direct video with req
 
 test("resolve (Rumble): reads its public embedJS API without browser capture", async () => {
   await withKino({
-    "https://rumble.com/embedJS/u3/?request=video&v=v7eiaew": JSON.stringify({ ua: { hls: "https://cdn.example/rumble.m3u8" } }),
+    "https://rumble.com/embedJS/u3/?request=video&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
   }, async (plugin, captured) => {
     const stream = await plugin.resolve("srv:2:sd:/gu-an-episodio-1/");
     assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
