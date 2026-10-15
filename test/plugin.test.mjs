@@ -213,7 +213,7 @@ test("resolve (OK.ru): reads player metadata and prefers a direct video with req
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
     assert.equal(stream.url, "https://cdn.example/ok.mp4");
     assert.equal(stream.mime, "video/mp4");
-    assert.equal(stream.headers.Referer, "https://ok.ru/");
+    assert.equal(stream.headers.Referer, "https://ok.ru/videoembed/9");
     assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1"]);
   });
@@ -229,7 +229,7 @@ test("resolve (OK.ru): classifies ondemandHls .mpd as DASH, not HLS", async () =
     assert.equal(stream.url, mpd);
     assert.equal(stream.mime, "application/dash+xml");
     assert.equal(stream.label, "OK.ru · DASH");
-    assert.equal(stream.headers.Referer, "https://ok.ru/");
+    assert.equal(stream.headers.Referer, "https://ok.ru/videoembed/9");
     assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.deepEqual(captured, []);
   });
