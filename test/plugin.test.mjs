@@ -208,7 +208,7 @@ test("resolve (Dailymotion): uses the direct stream API without browser capture"
 test("resolve (OK.ru): reads player metadata and prefers a direct video with required headers", async () => {
   await withKino({
     "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
-    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[{"name":"hd","url":"https://cdn.example/ok.mp4"}],"hlsManifestUrl":"https://cdn.example/ok.m3u8"}}}'></div>`,
+    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[{"name":"hd","url":"https://cdn.example/ok-file?token=abc"}],"hlsManifestUrl":"https://cdn.example/ok.m3u8"}}}'></div>`,
   }, async (plugin, captured) => {
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
     assert.equal(stream.url, "https://cdn.example/ok.mp4");
