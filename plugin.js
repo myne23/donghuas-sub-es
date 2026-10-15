@@ -737,17 +737,29 @@ async function resolveManual(embed, site, label) {
       log("servidor " + label + ": candidatos manifiesto OK.ru=" + JSON.stringify(manifests.map((item) => ({
         field: item.field, kind: item.kind, confirmedExtension: item.confirmedExtension, url: manifestUrlShape(item.url)
       }))).slice(0, 1600));
-      const manifest = manifests.find((item) => item.kind === "dash" && item.confirmedExtension) ||
-        manifests.find((item) => item.kind === "hls" && item.confirmedExtension) ||
-        manifests.find((item) => item.kind === "dash") ||
-        manifests.find((item) => item.kind === "hls");
+      // If both protocols are offered, try HLS first: Kino's playback path is
+      // already confirmed to handle HLS, while the OK.ru DASH manifest currently
+      // returns HTTP 400. Keep DASH available as a selectable fallback.
+      const manifest = manifests.find((item) => item.kind === "hls" && item.confirmedExtension) ||
+        manifests.find((item) => item.kind === "dash" && item.confirmedExtension) ||
+        manifests.find((item) => item.kind === "hls") ||
+        manifests.find((item) => item.kind === "dash");
       const direct = videos.find(directVideo);
-      const alternatives = (selectedUrl) => videos.filter((v) => directVideo(v) && v.url !== selectedUrl).slice(0, 7).map((v) => ({
-        url: v.url,
-        mime: /\.webm(?:[?#]|$)/i.test(v.url) ? "video/webm" : "video/mp4",
-        headers: streamHeaders,
-        label: ("OK.ru · " + String(v.name || v.quality || "Video")).slice(0, 48)
-      }));
+      const alternatives = (selectedUrl) => {
+        const otherManifests = manifests.filter((item) => item.url !== selectedUrl).map((item) => ({
+          url: item.url,
+          mime: item.kind === "dash" ? "application/dash+xml" : "application/x-mpegURL",
+          headers: streamHeaders,
+          label: "OK.ru · " + (item.kind === "dash" ? "DASH alternativo" : "HLS alternativo")
+        }));
+        const directVideos = videos.filter((v) => directVideo(v) && v.url !== selectedUrl).slice(0, 7).map((v) => ({
+          url: v.url,
+          mime: /\\.webm(?:[?#]|$)/i.test(v.url) ? "video/webm" : "video/mp4",
+          headers: streamHeaders,
+          label: ("OK.ru · " + String(v.name || v.quality || "Video")).slice(0, 48)
+        }));
+        return [...otherManifests, ...directVideos].slice(0, 8);
+      };
       if (manifest) {
         const dash = manifest.kind === "dash";
         const mime = dash ? "application/dash+xml" : "application/x-mpegURL";
