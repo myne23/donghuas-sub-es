@@ -355,8 +355,11 @@ async function sdEpisodes(path) {
   const re = /<article class="donghua-card episode-card-item" data-ep="(\d+)">\s*<a href="([^"]+)"([\s\S]*?)<\/article>/g;
   let m;
   while ((m = re.exec(html))) {
-    const n = Number(m[1]);
-    if (!n || seen.has(n)) continue;
+    // SeriesDonghua lists some movies as episode 0. Kino's episode contract starts at 1,
+    // so expose that special movie entry as episode 1 while keeping its real /episodio-0/ ref.
+    const sourceNumber = Number(m[1]);
+    const n = sourceNumber === 0 ? 1 : sourceNumber;
+    if (seen.has(n)) continue;
     seen.add(n);
     list.push({ number: n, ref: "sd:" + pathOf(m[2]), airDate: ymd(first(/fa-calendar-alt"><\/i>\s*([\d-]+)/, m[3])) });
   }
