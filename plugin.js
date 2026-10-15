@@ -590,15 +590,62 @@ async function resolveManual(embed, site, label) {
       const r = await kino.fetch(embed, { headers: { "User-Agent": headers["User-Agent"] } });
       if (!r.ok) return null;
       let html = r.text();
+      let realUrl = embed;
       const redirect = /window\.location\.href\s*=\s*['"]([^'"]+\/e\/[^'"]+)['"]/.exec(html);
       if (redirect && redirect[1]) {
-        const rr = await kino.fetch(new URL(redirect[1], embed).href, { headers: { "User-Agent": headers["User-Agent"] } });
+        realUrl = new URL(redirect[1], embed).href;
+        const rr = await kino.fetch(realUrl, { headers: { "User-Agent": headers["User-Agent"] } });
         if (!rr.ok) return null;
         html = rr.text();
       }
       let config = /<script[^>]+type=["']application\/json["'][^>]*>\s*(?:\[\s*)?["']([^"']+)["']/.exec(html);
       let encoded = config && config[1];
-      // ALTCHA-gated VOE pages need a challenge POST; leave those to Kino's browser fallback.
+      if (!encoded) {
+        // Some VOE pages protect the source with ALTCHA proof-of-work. Solve the bounded challenge
+        // directly; if the challenge is unsupported or too expensive, use Kino's browser fallback.
+        const csrf = /name=["']_token["'][^>]+value=["']([^"']+)["']/.exec(html);
+        const challenge = /<altcha-widget[^>]+challenge=["']([^"']+)["']/.exec(html);
+        if (!csrf || !challenge) return null;
+        const challengeUrl = new URL(challenge[1], realUrl).href;
+        const cr = await kino.fetch(challengeUrl, { headers: { "User-Agent": headers["User-Agent"], Referer: realUrl }, timeoutMs: 15000 });
+        if (!cr.ok) return null;
+        const cj = cr.json();
+        const algorithm = String(cj.algorithm || "").toLowerCase();
+        const cost = Number(cj.cost), keyLength = Number(cj.keyLength);
+        const keyPrefix = String(cj.keyPrefix || ""), nonce = String(cj.nonce || ""), salt = String(cj.salt || "");
+        if (!algorithm.includes("sha256") || !Number.isInteger(cost) || cost < 1 || cost > 100000 ||
+            !Number.isInteger(keyLength) || keyLength < 1 || keyLength > 64 ||
+            !/^[a-f0-9]+$/i.test(nonce) || !/^[a-f0-9]+$/i.test(salt) || !keyPrefix) return null;
+        const started = Date.now();
+        let solution = null;
+        for (let counter = 0; counter < 1000000 && Date.now() - started < 22000; counter++) {
+          const counterHex = counter.toString(16).padStart(8, "0");
+          const derived = kino.crypto.pbkdf2("sha256", nonce + counterHex, salt, cost, keyLength, {
+            inputEncoding: "hex", outputEncoding: "hex",
+          });
+          if (derived.startsWith(keyPrefix.toLowerCase())) {
+            solution = { counter, derivedKey: derived, time: Date.now() - started };
+            break;
+          }
+        }
+        if (!solution) return null;
+        const payload = { challenge: cj, solution };
+        const payloadB64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+        const origin = new URL(realUrl).origin;
+        const posted = await kino.fetch(realUrl, {
+          method: "POST",
+          headers: {
+            "User-Agent": headers["User-Agent"], Referer: realUrl, Origin: origin,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: { form: { _token: csrf[1], access: "0", altcha: payloadB64 } },
+          timeoutMs: 15000,
+        });
+        if (!posted.ok) return null;
+        html = posted.text();
+        config = /<script[^>]+type=["']application\/json["'][^>]*>\s*\[\s*["']([^"']+)["']\s*\]\s*<\/script>/i.exec(html);
+        encoded = config && config[1];
+      }
       if (!encoded) return null;
       const decoded = decodeVoeConfig(encoded);
       const source = /"source"\s*:\s*"([^"]+)"/.exec(decoded);
