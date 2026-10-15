@@ -687,7 +687,7 @@ async function resolvePageMedia(embed, site, label, headers) {
       const lower = s.toLowerCase();
       const found = keys.filter((k) => lower.includes(k.toLowerCase()));
       if (found.length) hints.push(labelText + ":" + found.join(","));
-      // Report literal API-like paths before snippets so useful evidence survives log limits.
+      // Prioritize player API paths and inspect later occurrences, not only the first CSS/library match.
       const paths = [];
       const pathRe = /["'](\/(?:api|hlsmod|stream|video|player)[^"'\s]{0,100})["']/gi;
       let pm;
@@ -696,26 +696,27 @@ async function resolvePageMedia(embed, site, label, headers) {
         if (!paths.includes(clean)) paths.push(clean);
       }
       if (paths.length) hints.push(labelText + ":paths=" + paths.join(","));
-      // Minified bundles often contain an early CSS/library occurrence before actual player code.
-      // Scan multiple occurrences and prioritize playback/API markers; redact URLs and signed values.
+      const contextMarkers = ["/api/v1/player", "/api/v1/video", "/api/v1/info", "/api/v1/download", "getPlay", "master.m3u8", "/hlsmod/", "keys="];
       let contextCount = 0;
-      for (const marker of ["master.m3u8", "application/vnd.apple.mpegurl", "/hlsmod/", "/api/", "getPlay", "m3u8", "hlsmod", "keys=", "keys:"]) {
+      for (const marker of contextMarkers) {
         let from = 0, occurrence = 0;
-        while (occurrence < 3 && contextCount < 10) {
+        while (occurrence < 2 && contextCount < 7) {
           const at = lower.indexOf(marker.toLowerCase(), from);
           if (at < 0) break;
           from = at + marker.length;
           occurrence++;
-          let snippet = s.slice(Math.max(0, at - 150), Math.min(s.length, at + marker.length + 190));
+          // Skip a likely CSS/library-only first hit for generic HLS markers; API paths keep their first hit.
+          if (occurrence === 1 && !marker.startsWith("/api/") && marker !== "getPlay" && marker !== "master.m3u8" && marker !== "keys=") continue;
+          let snippet = s.slice(Math.max(0, at - 180), Math.min(s.length, at + marker.length + 220));
           snippet = snippet
             .replace(/https?:\/\/[^"'\s]+/gi, "[URL]")
             .replace(/([?&](?:token|key|sig|signature|expires|auth|v)=)[^&"'\s]*/gi, "$1[redacted]")
             .replace(/[A-Za-z0-9_-]{48,}/g, "[long-value]")
             .replace(/\s+/g, " ");
-          hints.push("ctx(" + marker + "#" + occurrence + ")=" + snippet.slice(0, 270));
+          hints.push("ctx(" + marker + "#" + occurrence + ")=" + snippet.slice(0, 260));
           contextCount++;
         }
-        if (contextCount >= 10) break;
+        if (contextCount >= 7) break;
       }
       const candidate = findDirectMedia(s);
       if (candidate) return candidate;
@@ -739,7 +740,7 @@ async function resolvePageMedia(embed, site, label, headers) {
       if (media) break;
     }
     log("diagnóstico sp2p estático: scripts=" + scriptRefs.map((s) => (s.sameOrigin ? "local:" : "externo:") + s.host + s.path).slice(0, 8).join("|") +
-      "; inspeccionados=" + inspected.join("|") + "; pistas=" + hints.slice(0, 8).join("|").slice(0, 700));
+      "; inspeccionados=" + inspected.join("|") + "; pistas=" + hints.slice(0, 10).join("|").slice(0, 1450));
   }
   if (!media) {
     log("servidor " + label + ": HTML/JS estático no expuso URL HLS/MP4");
