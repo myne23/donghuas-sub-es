@@ -1,0 +1,42 @@
+{
+  "id": "donghuas-sub-es",
+  "name": "Donghuas Sub ES",
+  "version": "0.1.0",
+  "apiVersion": 6,
+  "entry": "plugin.js",
+  "description": "Donghuas (animación china) subtitulados al español, de SeriesDonghua y MundoDonghua. Últimos episodios y catálogo de cada página. No pide cuenta.",
+  "author": "myne23",
+  "homepage": "https://github.com/myne23/donghuas-sub-es",
+  "categories": ["anime"],
+  "color": "#D4532B",
+  "hosts": [
+    "seriesdonghua.com",
+    "*.seriesdonghua.com",
+    "mundodonghua.com",
+    "*.mundodonghua.com",
+    "dailymotion.com",
+    "*.dailymotion.com",
+    "ok.ru",
+    "*.ok.ru",
+    "rumble.com",
+    "*.rumble.com",
+    "voe.sx",
+    "*.voe.sx",
+    "bysekoze.com",
+    "*.bysekoze.com",
+    "vidhidepro.com",
+    "*.vidhidepro.com",
+    "embedwish.com",
+    "*.embedwish.com"
+  ],
+  "browser": true,
+  "streamHosts": "any",
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve",
+    "download"
+  ]
+}
