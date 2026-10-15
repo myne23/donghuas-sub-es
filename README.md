@@ -12,3 +12,10 @@ No pide cuenta ni ajustes. El plugin intenta resolver directamente Dailymotion, 
 Pruebas sin conexión: `node --test test/plugin.test.mjs`. Validar: `node sdk/validate.mjs .`.
 
 El código de `sdk/`, `contract.json` y `kino.d.ts` viene de las plantillas de Kino (Apache 2.0, ver LICENSE y NOTICE).
+
+
+### Resolución directa de servidores (0.1.2)
+
+- **OK.ru:** lee las opciones del reproductor y sus metadatos, selecciona primero un video MP4/WebM compatible y conserva las cabeceras de origen; deja HLS como alternativa cuando está disponible.
+- **Rumble:** consulta el endpoint público `embedJS` y prioriza el manifiesto HLS, evitando la captura del navegador cuando el proveedor entrega una URL directa.
+- Si el resolver directo no obtiene una fuente compatible, se conserva el mecanismo de captura de Kino como respaldo.
