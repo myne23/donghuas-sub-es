@@ -702,6 +702,19 @@ async function resolveManual(embed, site, label) {
       // OK.ru puede llamar "ondemandHls" a una URL DASH .mpd. No clasificarla
       // por el nombre del campo: el protocolo real lo determina el manifiesto.
       const manifests = [];
+      const manifestUrlShape = (value) => {
+        try {
+          const u = new URL(value);
+          const ext = /\\.(mpd|m3u8)$/i.exec(u.pathname);
+          return {
+            host: u.hostname,
+            pathTail: u.pathname.split("/").filter(Boolean).slice(-1)[0]?.replace(/[^a-zA-Z0-9._-]/g, "").slice(-24) || "/",
+            extension: ext ? ext[1].toLowerCase() : "none",
+            length: value.length,
+            queryKeys: Array.from(u.searchParams.keys()).slice(0, 12)
+          };
+        } catch { return { invalid: true }; }
+      };
       const collectManifests = (node, key, depth) => {
         if (depth > 8 || node == null) return;
         if (typeof node === "string") {
@@ -709,17 +722,25 @@ async function resolveManual(embed, site, label) {
           if (!/^https:\/\//i.test(value)) return;
           let pathname = "";
           try { pathname = new URL(value).pathname; } catch { return; }
-          if (/\.mpd$/i.test(pathname)) manifests.push({ url: value, kind: "dash" });
-          else if (/\.m3u8$/i.test(pathname)) manifests.push({ url: value, kind: "hls" });
-          else if (/ondemandDash/i.test(key)) manifests.push({ url: value, kind: "dash" });
-          else if (/hls/i.test(key)) manifests.push({ url: value, kind: "hls" });
+          // Use the actual URL extension when present. If the server gives an extensionless
+          // manifest endpoint, retain the metadata field as a fallback but log that fact.
+          if (/\.mpd$/i.test(pathname)) manifests.push({ url: value, kind: "dash", field: key, confirmedExtension: true });
+          else if (/\.m3u8$/i.test(pathname)) manifests.push({ url: value, kind: "hls", field: key, confirmedExtension: true });
+          else if (/ondemandDash/i.test(key)) manifests.push({ url: value, kind: "dash", field: key, confirmedExtension: false });
+          else if (/hls/i.test(key)) manifests.push({ url: value, kind: "hls", field: key, confirmedExtension: false });
           return;
         }
         if (Array.isArray(node)) { for (const item of node) collectManifests(item, key, depth + 1); return; }
         if (typeof node === "object") for (const [childKey, value] of Object.entries(node)) collectManifests(value, key + "." + childKey, depth + 1);
       };
       for (const key of ["ondemandDash", "hlsMasterPlaylistUrl", "hlsManifestUrl", "ondemandHls", "hlsMasterUrl"]) collectManifests(metadata && metadata[key], key, 0);
-      const manifest = manifests.find((item) => item.kind === "dash") || manifests.find((item) => item.kind === "hls");
+      log("servidor " + label + ": candidatos manifiesto OK.ru=" + JSON.stringify(manifests.map((item) => ({
+        field: item.field, kind: item.kind, confirmedExtension: item.confirmedExtension, url: manifestUrlShape(item.url)
+      }))).slice(0, 1600));
+      const manifest = manifests.find((item) => item.kind === "dash" && item.confirmedExtension) ||
+        manifests.find((item) => item.kind === "hls" && item.confirmedExtension) ||
+        manifests.find((item) => item.kind === "dash") ||
+        manifests.find((item) => item.kind === "hls");
       const direct = videos.find(directVideo);
       const alternatives = (selectedUrl) => videos.filter((v) => directVideo(v) && v.url !== selectedUrl).slice(0, 7).map((v) => ({
         url: v.url,
@@ -733,7 +754,7 @@ async function resolveManual(embed, site, label) {
         const stream = { url: manifest.url, mime, headers: streamHeaders, label: dash ? "OK.ru · DASH" : "OK.ru · HLS" };
         stream.alternatives = alternatives(manifest.url);
         if (!stream.alternatives.length) delete stream.alternatives;
-        log("servidor " + label + ": manifiesto " + (dash ? "DASH (.mpd)" : "HLS (.m3u8)") + " de OK.ru resuelto desde metadata");
+        log("servidor " + label + ": manifiesto " + (dash ? "DASH" : "HLS") + (manifest.confirmedExtension ? (dash ? " (.mpd)" : " (.m3u8)") : " (extensión no confirmada; inferido de " + manifest.field + ")") + " de OK.ru resuelto desde metadata");
         return stream;
       }
       if (direct) {
