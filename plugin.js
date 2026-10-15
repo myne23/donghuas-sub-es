@@ -651,22 +651,40 @@ function findDirectMedia(html) {
 // the current HTTPS embed format with an empty URL fragment; anything else keeps the
 // existing static extraction + hidden-browser fallback.
 async function resolveSp2pApi(embed, site, label, headers, html) {
-  let pageUrl, id;
+  let pageUrl, id = "";
   try {
     pageUrl = new URL(embed);
-    if (pageUrl.protocol !== "https:" || pageUrl.hash) return null;
-    id = pageUrl.searchParams.get("id") || pageUrl.searchParams.get("videoId") || "";
+    if (pageUrl.protocol !== "https:") {
+      log("servidor " + label + ": sp2p API omitida: el embed no usa HTTPS");
+      return null;
+    }
+    // Accept common query names; URL fragments are not grounds to skip the API.
+    for (const key of ["id", "videoId", "video_id", "videoID", "v"]) {
+      const value = pageUrl.searchParams.get(key) || "";
+      if (/^[A-Za-z0-9_-]{3,80}$/.test(value)) { id = value; break; }
+    }
   } catch {
+    log("servidor " + label + ": sp2p API omitida: URL de embed inválida");
     return null;
   }
   if (!/^[A-Za-z0-9_-]{3,80}$/.test(id)) {
     const source = String(html || "");
-    const match =
-      /\/api\/v1\/video\?id=([A-Za-z0-9_-]{3,80})/i.exec(source) ||
-      /(?:videoId|video_id|videoID)\s*[:=]\s*["']([A-Za-z0-9_-]{3,80})["']/i.exec(source);
-    id = match ? match[1] : "";
+    const patterns = [
+      /\/api\/v1\/(?:video|info|player)\?[^"'\s]{0,100}?(?:id|videoId|video_id)=([A-Za-z0-9_-]{3,80})/i,
+      /(?:videoId|video_id|videoID|video_id_value|video)\s*[:=]\s*["']([A-Za-z0-9_-]{3,80})["']/i,
+      /[?&](?:id|videoId|video_id|v)=([A-Za-z0-9_-]{3,80})(?:[&#"'\s]|$)/i
+    ];
+    for (const pattern of patterns) {
+      const match = pattern.exec(source);
+      if (match) { id = match[1]; break; }
+    }
   }
-  if (!/^[A-Za-z0-9_-]{3,80}$/.test(id)) return null;
+  if (!/^[A-Za-z0-9_-]{3,80}$/.test(id)) {
+    let queryKeys = "";
+    try { queryKeys = Array.from(pageUrl.searchParams.keys()).join(",") || "(ninguna)"; } catch {}
+    log("servidor " + label + ": sp2p API omitida: no se encontró ID; ruta=" + pageUrl.pathname.slice(0, 90) + "; parámetros=" + queryKeys);
+    return null;
+  }
 
   const origin = pageUrl.origin;
   let response;
