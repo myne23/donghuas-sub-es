@@ -694,15 +694,15 @@ async function resolvePageMedia(embed, site, label, headers) {
         if (at < 0) continue;
         let snippet = s.slice(Math.max(0, at - 105), Math.min(s.length, at + marker.length + 145));
         snippet = snippet
-          .replace(/https?:\\/\\/[^"'\\s]+/gi, "[URL]")
-          .replace(/([?&](?:token|key|sig|signature|expires|auth|v)=)[^&"'\\s]*/gi, "$1[redacted]")
+          .replace(/https?:\/\/[^"'\s]+/gi, "[URL]")
+          .replace(/([?&](?:token|key|sig|signature|expires|auth|v)=)[^&"'\s]*/gi, "$1[redacted]")
           .replace(/[A-Za-z0-9_-]{48,}/g, "[long-value]")
-          .replace(/\\s+/g, " ");
+          .replace(/\s+/g, " ");
         hints.push("ctx(" + marker + ")=" + snippet.slice(0, 240));
       }
       // Report literal API-like paths from the bundle; omit query strings and values.
       const paths = [];
-      const pathRe = /["'](\\/(?:api|hlsmod|stream|video|player)[^"'\\s]{0,100})["']/gi;
+      const pathRe = /["'](\/(?:api|hlsmod|stream|video|player)[^"'\s]{0,100})["']/gi;
       let pm;
       while ((pm = pathRe.exec(s)) && paths.length < 8) {
         const clean = pm[1].split("?")[0].replace(/[A-Za-z0-9_-]{28,}/g, "[id]");
