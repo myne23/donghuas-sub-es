@@ -241,7 +241,7 @@ test("resolve (OK.ru): prefers HLS when both HLS and DASH manifests are present"
   const hls = "https://cdn.example/master.m3u8";
   await withKino({
     "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
-    "https://ok.ru/videoembed/9": String.raw`<div data-options='{\"flashvars\":{\"metadata\":{\"videos\":[],\"ondemandHls\":\"https://cdn.example/opaque-hls-token\",\"ondemandDash\":\"${mpd}\"}}}'></div>`,
+    "https://ok.ru/videoembed/9": String.raw`<div data-options='{\"flashvars\":{\"metadata\":{\"videos\":[],\"ondemandHls\":\"${hls}\",\"ondemandDash\":\"${mpd}\"}}}'></div>`,
   }, async (plugin, captured, logs) => {
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
     assert.equal(stream.url, hls);
