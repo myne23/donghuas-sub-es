@@ -686,7 +686,7 @@ async function resolveSp2pApi(embed, site, label, headers) {
   // The API validates these parameters. Match the player request and do not send
   // an Origin header: the endpoint rejects that header in direct HTTP requests.
   const apiUrl = origin + "/api/v1/video?id=" + encodeURIComponent(id) +
-    "&w=2048&h=1280&r=" + encodeURIComponent(referrerHost);
+    "&w=1280&h=720&r=" + encodeURIComponent(referrerHost);
   let response;
   try {
     response = await kino.fetch(apiUrl, {
@@ -746,8 +746,10 @@ async function resolveSp2pApi(embed, site, label, headers) {
     } catch { return "Fuente alternativa"; }
   };
 
-  addCandidate(data && data.source);
+  // Prefer the native proxy manifest: it may seek/start faster than the raw edge URL.
+  // Keep the raw source and CDN proxy as fallbacks in case this route is unavailable.
   addCandidate(data && data.cfNative);
+  addCandidate(data && data.source);
 
   // hlsVideoTiktok is a path, not a complete URL. Rebuild the hlsmod proxy URL
   // from the live config so the CDN hostname and its signed query aren't stale.
