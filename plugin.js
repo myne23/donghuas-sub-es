@@ -650,66 +650,65 @@ function findDirectMedia(html) {
 // sp2p's API returns an AES-CBC encrypted hex payload. This validated path is for
 // the current HTTPS embed format with an empty URL fragment; anything else keeps the
 // existing static extraction + hidden-browser fallback.
-async function resolveSp2pApi(embed, site, label, headers, html) {
+async function resolveSp2pApi(embed, site, label, headers) {
   let pageUrl, id = "";
   try {
     pageUrl = new URL(embed);
     if (pageUrl.protocol !== "https:") {
-      log("servidor " + label + ": sp2p API omitida: el embed no usa HTTPS");
+      log("servidor " + label + ": sp2p requiere HTTPS");
       return null;
     }
-    // Accept common query names; URL fragments are not grounds to skip the API.
-    for (const key of ["id", "videoId", "video_id", "videoID", "v"]) {
-      const value = pageUrl.searchParams.get(key) || "";
-      if (/^[A-Za-z0-9_-]{3,80}$/.test(value)) { id = value; break; }
+    // sp2p puts the video ID in the iframe fragment, e.g. #tu8i1l.
+    id = pageUrl.hash.slice(1).split("&")[0].trim();
+    if (!/^[A-Za-z0-9_-]{3,80}$/.test(id)) {
+      for (const key of ["id", "videoId", "video_id", "videoID", "v"]) {
+        const value = pageUrl.searchParams.get(key) || "";
+        if (/^[A-Za-z0-9_-]{3,80}$/.test(value)) { id = value; break; }
+      }
     }
   } catch {
-    log("servidor " + label + ": sp2p API omitida: URL de embed inválida");
+    log("servidor " + label + ": URL sp2p inválida");
     return null;
   }
   if (!/^[A-Za-z0-9_-]{3,80}$/.test(id)) {
-    const source = String(html || "");
-    const patterns = [
-      /\/api\/v1\/(?:video|info|player)\?[^"'\s]{0,100}?(?:id|videoId|video_id)=([A-Za-z0-9_-]{3,80})/i,
-      /(?:videoId|video_id|videoID|video_id_value|video)\s*[:=]\s*["']([A-Za-z0-9_-]{3,80})["']/i,
-      /[?&](?:id|videoId|video_id|v)=([A-Za-z0-9_-]{3,80})(?:[&#"'\s]|$)/i
-    ];
-    for (const pattern of patterns) {
-      const match = pattern.exec(source);
-      if (match) { id = match[1]; break; }
-    }
-  }
-  if (!/^[A-Za-z0-9_-]{3,80}$/.test(id)) {
-    let queryKeys = "";
-    try { queryKeys = Array.from(pageUrl.searchParams.keys()).join(",") || "(ninguna)"; } catch {}
-    log("servidor " + label + ": sp2p API omitida: no se encontró ID; ruta=" + pageUrl.pathname.slice(0, 90) + "; parámetros=" + queryKeys);
+    log("servidor " + label + ": no se encontró el ID sp2p en el hash ni en los parámetros");
     return null;
   }
 
   const origin = pageUrl.origin;
+  let referrerHost = "";
+  try { referrerHost = new URL(site.base).hostname.replace(/^www\./i, ""); } catch {}
+  if (!referrerHost) {
+    log("servidor " + label + ": no pude determinar el sitio de origen para sp2p");
+    return null;
+  }
+
+  // The API validates these parameters. Match the player request and do not send
+  // an Origin header: the endpoint rejects that header in direct HTTP requests.
+  const apiUrl = origin + "/api/v1/video?id=" + encodeURIComponent(id) +
+    "&w=2048&h=1280&r=" + encodeURIComponent(referrerHost);
   let response;
   try {
-    response = await kino.fetch(origin + "/api/v1/video?id=" + encodeURIComponent(id), {
+    response = await kino.fetch(apiUrl, {
       headers: {
-        ...headers,
+        "User-Agent": headers["User-Agent"],
         Accept: "text/plain, */*",
-        Origin: origin,
-        Referer: embed
+        Referer: origin + "/"
       },
-      timeoutMs: 7000
+      timeoutMs: 9000
     });
-  } catch {
-    log("servidor " + label + ": API sp2p no disponible; sigo con el método de respaldo");
+  } catch (e) {
+    log("servidor " + label + ": error consultando la API sp2p");
     return null;
   }
   if (!response.ok) {
-    log("servidor " + label + ": API sp2p respondió HTTP " + response.status + "; sigo con el respaldo");
+    log("servidor " + label + ": API sp2p respondió HTTP " + response.status);
     return null;
   }
 
   const encrypted = String(response.text() || "").trim();
   if (!/^(?:[0-9a-f]{2}){16,}$/i.test(encrypted)) {
-    log("servidor " + label + ": respuesta API sp2p no reconocida; sigo con el respaldo");
+    log("servidor " + label + ": respuesta cifrada sp2p no reconocida");
     return null;
   }
 
@@ -717,38 +716,87 @@ async function resolveSp2pApi(embed, site, label, headers, html) {
   try {
     const plaintext = kino.crypto.decrypt("aes-128-cbc", {
       key: "kiemtienmua911ca",
-      iv: "1234567890o\0uytr",
+      iv: "1234567890oiuytr",
       data: encrypted,
       inputEncoding: "hex",
-      outputEncoding: "utf8"
+      outputEncoding: "utf8",
+      keyEncoding: "utf8",
+      ivEncoding: "utf8"
     });
     data = JSON.parse(plaintext);
-  } catch {
-    log("servidor " + label + ": no pude descifrar la respuesta sp2p; sigo con el respaldo");
+  } catch (e) {
+    log("servidor " + label + ": no pude descifrar la respuesta sp2p");
     return null;
   }
 
-  const candidates = [data && data.source, data && data.hlsVideoTiktok, data && data.cfNative];
-  const mediaUrl = candidates.find((value) =>
-    typeof value === "string" && /^https:\/\//i.test(value) && /\.m3u8(?:$|[?#])/i.test(value)
-  );
-  if (!mediaUrl) {
-    log("servidor " + label + ": API sp2p no devolvió un HLS directo; sigo con el respaldo");
+  const candidates = [];
+  const addCandidate = (value) => {
+    if (typeof value !== "string" || !value.trim()) return;
+    let url;
+    try { url = new URL(value, origin).href; } catch { return; }
+    if (!/^https:\/\//i.test(url) || !/\.m3u8(?:$|[?#])/i.test(url)) return;
+    if (!candidates.some((item) => item.url === url)) candidates.push({ url, label: itemLabel(url) });
+  };
+  const itemLabel = (value) => {
+    try {
+      const host = new URL(value).hostname.toLowerCase();
+      if (host.includes("tiktokcdn")) return "TikTok CDN";
+      if (host === new URL(origin).hostname && /\/v4\/pl\//.test(new URL(value).pathname)) return "Cloudflare nativo";
+      return "Fuente principal";
+    } catch { return "Fuente alternativa"; }
+  };
+
+  addCandidate(data && data.source);
+  addCandidate(data && data.cfNative);
+
+  // hlsVideoTiktok is a path, not a complete URL. Rebuild the hlsmod proxy URL
+  // from the live config so the CDN hostname and its signed query aren't stale.
+  try {
+    const config = typeof data.streamingConfig === "string"
+      ? JSON.parse(data.streamingConfig)
+      : data.streamingConfig;
+    const adjust = config && config.adjust && config.adjust.Tiktok;
+    const domain = String(adjust && adjust.domain || "").trim();
+    let path = String(data && data.hlsVideoTiktok || "").trim();
+    if (domain && path) {
+      path = path.replace(/^\/hls\/?/i, "/").replace(/^\/+/, "/");
+      const tiktokUrl = origin + "/hlsmod/" + domain.replace(/^\/+|\/+$/g, "") + path;
+      const params = adjust && adjust.params;
+      const query = params && typeof params === "object"
+        ? Object.keys(params).map((key) => encodeURIComponent(key) + "=" + encodeURIComponent(String(params[key]))).join("&")
+        : "";
+      addCandidate(tiktokUrl + (query ? (tiktokUrl.includes("?") ? "&" : "?") + query : ""));
+    }
+  } catch {}
+
+  if (!candidates.length) {
+    log("servidor " + label + ": la API sp2p no devolvió URLs HLS utilizables");
     return null;
   }
 
-  const stream = directStream(mediaUrl, label + " · " + site.name, embed, "application/x-mpegURL");
+  const selected = candidates[0];
+  const stream = directStream(selected.url, label + " · " + site.name + " · sp2p", origin + "/", "application/x-mpegURL");
   if (!stream) return null;
-  stream.headers = {
+  const streamHeaders = {
     "User-Agent": headers["User-Agent"],
-    Referer: embed,
+    Referer: origin + "/",
     Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*"
   };
+  stream.headers = streamHeaders;
+  const alternatives = candidates.slice(1, 4).map((item) => ({
+    url: item.url,
+    mime: "application/x-mpegURL",
+    headers: streamHeaders,
+    label: (label + " · " + item.label).slice(0, 48)
+  }));
+  if (alternatives.length) stream.alternatives = alternatives;
+
   try {
-    const u = new URL(mediaUrl);
-    log("servidor " + label + ": HLS resuelto por API sp2p (" + u.hostname + u.pathname.slice(0, 70) + ")");
+    const u = new URL(selected.url);
+    log("servidor " + label + ": sp2p descifrado correctamente; HLS " + u.hostname + u.pathname.slice(0, 60) +
+      (alternatives.length ? "; alternativas=" + alternatives.length : ""));
   } catch {
-    log("servidor " + label + ": HLS resuelto por API sp2p");
+    log("servidor " + label + ": sp2p descifrado correctamente; HLS resuelto");
   }
   return stream;
 }
@@ -1052,8 +1100,13 @@ async function resolveManual(embed, site, label) {
       return null;
     }
 
-    if (host === "strp2p.com" || host.endsWith(".strp2p.com") ||
-        host === "vidhidepro.com" || host.endsWith(".vidhidepro.com") ||
+    if (host === "strp2p.com" || host.endsWith(".strp2p.com")) {
+      const stream = await resolveSp2pApi(embed, site, label, headers);
+      if (stream) return stream;
+      return await resolvePageMedia(embed, site, label, headers);
+    }
+
+    if (host === "vidhidepro.com" || host.endsWith(".vidhidepro.com") ||
         host === "embedwish.com" || host.endsWith(".embedwish.com")) {
       return await resolvePageMedia(embed, site, label, headers);
     }
