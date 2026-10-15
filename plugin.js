@@ -538,7 +538,7 @@ function parseOkruPlayerOptions(html) {
   for (const tag of tags) {
     const m = /\bdata-options\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag);
     if (!m) continue;
-    const raw = decode(m[2]).replace(/\\u0026/gi, "&").replace(/\\\//g, "/");
+    const raw = decode(m[2]).replace(/\\u0026/gi, "&").replace(/\\\//g, "/").replace(/\\+\"/g, '"');
     try { return JSON.parse(raw); } catch {}
     try { return JSON.parse(decode(raw)); } catch {}
   }
