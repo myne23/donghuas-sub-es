@@ -660,88 +660,9 @@ async function resolvePageMedia(embed, site, label, headers) {
     log("servidor " + label + ": página del reproductor respondió HTTP " + response.status);
     return null;
   }
-  const html = response.text();
-  let media = findDirectMedia(html);
-  const isSp2p = (() => {
-    try { const h = new URL(embed).hostname.toLowerCase(); return h === "strp2p.com" || h.endsWith(".strp2p.com"); } catch { return false; }
-  })();
-  if (!media && isSp2p) {
-    // sp2p builds its HLS URL after JavaScript runs. Inspect the static page's
-    // script references, then fetch only same-origin scripts and scan them without executing code.
-    const embedOrigin = new URL(embed).origin;
-    const scriptRefs = [];
-    const scriptRe = /<script\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/gi;
-    let sm;
-    while ((sm = scriptRe.exec(html)) && scriptRefs.length < 12) {
-      try {
-        const scriptUrl = new URL(decode(sm[2]), embed).href;
-        const su = new URL(scriptUrl);
-        const key = su.origin + su.pathname;
-        if (!scriptRefs.some((x) => x.key === key)) scriptRefs.push({ key, url: scriptUrl, sameOrigin: su.origin === embedOrigin, host: su.hostname, path: su.pathname.slice(0, 100) });
-      } catch {}
-    }
-    const hints = [];
-    const inspect = (source, labelText) => {
-      const s = String(source || "");
-      const keys = ["hlsmod", "master.m3u8", "keys=", "keys:", "XMLHttpRequest", "fetch(", "/api/", "token", "sign", "m3u8"];
-      const lower = s.toLowerCase();
-      const found = keys.filter((k) => lower.includes(k.toLowerCase()));
-      if (found.length) hints.push(labelText + ":" + found.join(","));
-      // Prioritize player API paths and inspect later occurrences, not only the first CSS/library match.
-      const paths = [];
-      const pathRe = /["'](\/(?:api|hlsmod|stream|video|player)[^"'\s]{0,100})["']/gi;
-      let pm;
-      while ((pm = pathRe.exec(s)) && paths.length < 12) {
-        const clean = pm[1].split("?")[0].replace(/[A-Za-z0-9_-]{28,}/g, "[id]");
-        if (!paths.includes(clean)) paths.push(clean);
-      }
-      if (paths.length) hints.push(labelText + ":paths=" + paths.join(","));
-      // Wider windows around code that constructs the sp2p player request.
-      // Keep endpoint/property names but redact signed query values and opaque tokens.
-      const contextMarkers = ["/api/v1/player?t=", "httpStream", "__p2pDynCfg", "capacityTokenExpire", "/api/v1/video?id=", "/api/v1/info?id=", "videoId", "getPlay", "/hlsmod/"];
-      const contextSeen = new Set();
-      let contextCount = 0;
-      for (const marker of contextMarkers) {
-        const at = lower.indexOf(marker.toLowerCase());
-        if (at < 0 || contextSeen.has(marker) || contextCount >= 7) continue;
-        contextSeen.add(marker);
-        let snippet = s.slice(Math.max(0, at - 360), Math.min(s.length, at + marker.length + 520));
-        snippet = snippet
-          .replace(/([?&](?:token|key|keys|sig|signature|expires|auth|capacityToken|capacityTokenExpire|t)=)[^&"'\\s]*/gi, "$1[redacted]")
-          .replace(/https?:\\/\\/[^"'\\s]+/gi, (url) => {
-            try { const u = new URL(url); return u.origin + u.pathname; } catch { return "[URL]"; }
-          })
-          .replace(/[A-Za-z0-9_-]{64,}/g, "[long-value]")
-          .replace(/\\s+/g, " ");
-        hints.push("ctx(" + marker + ")=" + snippet.slice(0, 850));
-        contextCount++;
-      }
-      const candidate = findDirectMedia(s);
-      if (candidate) return candidate;
-      return null;
-    };
-    media = inspect(html, "html");
-    const inspected = [];
-    for (const script of scriptRefs) {
-      if (!script.sameOrigin) continue;
-      inspected.push(script.host + script.path);
-      if (inspected.length > 4) break;
-      try {
-        const sr = await kino.fetch(script.url, { headers: { ...headers, Referer: embed }, timeoutMs: 3500 });
-        if (!sr.ok) { hints.push(script.path + ":HTTP" + sr.status); continue; }
-        const body = sr.text();
-        const found = inspect(body, script.path);
-        if (!media && found) media = found;
-      } catch (e) {
-        hints.push(script.path + ":fetch-error");
-      }
-      if (media) break;
-    }
-    log("diagnóstico sp2p estático: scripts=" + scriptRefs.map((s) => (s.sameOrigin ? "local:" : "externo:") + s.host + s.path).slice(0, 8).join("|") +
-      "; inspeccionados=" + inspected.join("|") + "; pistas=" + hints.slice(0, 12).join("|").slice(0, 3600));
-  }
+  const media = findDirectMedia(response.text());
   if (!media) {
-    log("servidor " + label + ": HTML/JS estático no expuso URL HLS/MP4");
+    log("servidor " + label + ": HTML consultado directamente; no expuso URL HLS/MP4");
     return null;
   }
   const isVidHide = (() => {
