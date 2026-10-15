@@ -686,7 +686,7 @@ async function resolveManual(embed, site, label) {
         keys: v && typeof v === "object" ? Object.keys(v).slice(0, 12) : [],
         url: typeof v.url === "string" ? (() => { try { const u = new URL(v.url); return { host: u.hostname, path: u.pathname.slice(-28), extension: /\.(m3u8|mp4|webm)$/i.exec(u.pathname)?.[1] || "none", length: v.url.length, queryKeys: Array.from(u.searchParams.keys()).slice(0, 10) }; } catch { return { invalid: true }; } })() : typeof v.url
       }));
-      const hlsFields = ["hlsMasterPlaylistUrl", "hlsManifestUrl", "ondemandHls", "hlsMasterUrl"]
+      const hlsFields = ["hlsMasterPlaylistUrl", "hlsManifestUrl", "ondemandHls", "ondemandDash", "hlsMasterUrl"]
         .map((key) => ({ key, type: !metadata || metadata[key] == null ? "missing" : Array.isArray(metadata[key]) ? "array" : typeof metadata[key] }));
       log("servidor " + label + ": metadatos OK.ru keys=" + JSON.stringify(metadataShape) + " hls=" + JSON.stringify(hlsFields) + " videos=" + JSON.stringify(videoSummary).slice(0, 1100));
       const rank = (v) => {
@@ -711,13 +711,14 @@ async function resolveManual(embed, site, label) {
           try { pathname = new URL(value).pathname; } catch { return; }
           if (/\.mpd$/i.test(pathname)) manifests.push({ url: value, kind: "dash" });
           else if (/\.m3u8$/i.test(pathname)) manifests.push({ url: value, kind: "hls" });
-          else if (/hls|ondemand/i.test(key)) manifests.push({ url: value, kind: "hls" });
+          else if (/ondemandDash/i.test(key)) manifests.push({ url: value, kind: "dash" });
+          else if (/hls/i.test(key)) manifests.push({ url: value, kind: "hls" });
           return;
         }
         if (Array.isArray(node)) { for (const item of node) collectManifests(item, key, depth + 1); return; }
         if (typeof node === "object") for (const [childKey, value] of Object.entries(node)) collectManifests(value, key + "." + childKey, depth + 1);
       };
-      for (const key of ["hlsMasterPlaylistUrl", "hlsManifestUrl", "ondemandHls", "hlsMasterUrl"]) collectManifests(metadata && metadata[key], key, 0);
+      for (const key of ["ondemandDash", "hlsMasterPlaylistUrl", "hlsManifestUrl", "ondemandHls", "hlsMasterUrl"]) collectManifests(metadata && metadata[key], key, 0);
       const manifest = manifests.find((item) => item.kind === "dash") || manifests.find((item) => item.kind === "hls");
       const direct = videos.find(directVideo);
       const alternatives = (selectedUrl) => videos.filter((v) => directVideo(v) && v.url !== selectedUrl).slice(0, 7).map((v) => ({
