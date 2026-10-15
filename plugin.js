@@ -705,7 +705,7 @@ async function resolveManual(embed, site, label) {
       const manifestUrlShape = (value) => {
         try {
           const u = new URL(value);
-          const ext = /\\.(mpd|m3u8)$/i.exec(u.pathname);
+          const ext = /\.(mpd|m3u8)$/i.exec(u.pathname);
           return {
             host: u.hostname,
             pathTail: u.pathname.split("/").filter(Boolean).slice(-1)[0]?.replace(/[^a-zA-Z0-9._-]/g, "").slice(-24) || "/",
