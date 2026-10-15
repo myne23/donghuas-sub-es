@@ -670,7 +670,7 @@ async function resolvePageMedia(embed, site, label, headers) {
     // script references, then fetch only same-origin scripts and scan them without executing code.
     const embedOrigin = new URL(embed).origin;
     const scriptRefs = [];
-    const scriptRe = /<script\\b[^>]*\\bsrc\\s*=\\s*(["'])(.*?)\\1/gi;
+    const scriptRe = /<script\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/gi;
     let sm;
     while ((sm = scriptRe.exec(html)) && scriptRefs.length < 12) {
       try {
