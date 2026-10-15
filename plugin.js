@@ -1207,13 +1207,13 @@ async function capture(site, server) {
   }
   const manual = await resolveManual(embed, site, server.name);
   if (manual) return manual;
-  // Some sp2p pages expose no media URL in static HTML; try browser capture as a
-  // fallback when the user selects that server. Keep this after the direct HTTP resolver
-  // so the fast path remains unchanged for providers that publish a direct HLS URL.
+  // sp2p stays HTTP-only. Byse/Filemoon now falls back to capture because its
+  // player obtains the signed HLS URL through an encrypted playback API after JS runs.
   try {
     const host = new URL(embed).hostname.toLowerCase();
     if (host === "strp2p.com" || host.endsWith(".strp2p.com")) {
-      log("servidor " + server.name + ": sin URL directa; probando captura del reproductor");
+      log("servidor " + server.name + ": no se pudo resolver por HTTP directo; sp2p omite captura de navegador");
+      return null;
     }
   } catch {}
   let res;
@@ -1230,26 +1230,6 @@ async function capture(site, server) {
     return null;
   }
   const hls = /\.m3u8|mpegurl/i.test(pick.url + " " + (pick.mime || ""));
-  // For sp2p, record only URL structure (never signed query values) so the next
-  // iteration can identify its direct playback endpoint without exposing tokens.
-  try {
-    const host = new URL(embed).hostname.toLowerCase();
-    if (host === "strp2p.com" || host.endsWith(".strp2p.com")) {
-      const describe = (raw) => {
-        const u = new URL(raw);
-        const keys = [];
-        u.searchParams.forEach((_, key) => { if (!keys.includes(key)) keys.push(key); });
-        return u.hostname + u.pathname.slice(0, 100) + (keys.length ? "?keys=" + keys.slice(0, 12).join(",") : "");
-      };
-      let page = "desconocida";
-      try { page = describe(res.finalUrl || embed); } catch {}
-      let mediaInfo = "URL no reconocida";
-      try { mediaInfo = describe(pick.url); } catch {}
-      log("diagnóstico sp2p: página=" + page + "; medio=" + mediaInfo +
-        "; tipo=" + String(pick.mime || (hls ? "application/x-mpegURL" : "desconocido")) +
-        "; headers=" + Object.keys(pick.headers || {}).join(","));
-    }
-  } catch {}
   const stream = { url: pick.url, headers: pick.headers || {}, label: (server.name + " · " + site.name).slice(0, 48) };
   stream.mime = hls ? "application/x-mpegURL" : pick.mime && /^[a-z]+\/[\w.+-]+$/i.test(pick.mime) ? pick.mime : undefined;
   if (!stream.mime) delete stream.mime;
