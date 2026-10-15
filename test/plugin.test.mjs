@@ -236,19 +236,21 @@ test("resolve (OK.ru): classifies ondemandHls .mpd as DASH, not HLS", async () =
   });
 });
 
-test("resolve (OK.ru): reads ondemandDash as DASH even when ondemandHls is also present", async () => {
+test("resolve (OK.ru): prefers HLS when both HLS and DASH manifests are present", async () => {
   const mpd = "https://cdn.example/dash4_9.signed.mpd";
+  const hls = "https://cdn.example/master.m3u8";
   await withKino({
     "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
     "https://ok.ru/videoembed/9": String.raw`<div data-options='{\"flashvars\":{\"metadata\":{\"videos\":[],\"ondemandHls\":\"https://cdn.example/opaque-hls-token\",\"ondemandDash\":\"${mpd}\"}}}'></div>`,
   }, async (plugin, captured, logs) => {
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
-    assert.equal(stream.url, mpd);
-    assert.equal(stream.mime, "application/dash+xml");
-    assert.equal(stream.label, "OK.ru · DASH");
+    assert.equal(stream.url, hls);
+    assert.equal(stream.mime, "application/x-mpegURL");
+    assert.equal(stream.label, "OK.ru · HLS");
     assert.equal(stream.headers.Referer, "https://ok.ru/videoembed/9");
     assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.deepEqual(captured, []);
+    assert.ok(stream.alternatives.some((item) => item.url === mpd && item.mime === "application/dash+xml"));
     assert.ok(logs.some((line) => line.includes('"extension":"mpd"') && line.includes('"confirmedExtension":true')));
   });
 });
