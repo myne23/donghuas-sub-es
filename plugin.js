@@ -1256,7 +1256,21 @@ export async function resolve(ref) {
   let stream = null;
   let tried = 0;
   const left = [];
-  for (let i = 0; i < servers.length; i++) {
+  // Try fast, direct HTTP resolvers before Filemoon/Bysekoze, whose challenge flow
+  // can consume ~15-20 seconds before the player even opens. Keep original indexes
+  // so each lazy alternative still points to the correct server.
+  const priority = (name) => {
+    const n = String(name || "").toLowerCase();
+    if (/voe|amagi/.test(n)) return 0;
+    if (/streamwish|swish/.test(n)) return 1;
+    if (/vidhide|vhide/.test(n)) return 2;
+    if (/filemoon|bysekoze|fmoon/.test(n)) return 4;
+    return 3;
+  };
+  const attemptOrder = servers.map((server, index) => ({ index, priority: priority(server.name) }))
+    .sort((a, b) => a.priority - b.priority || a.index - b.index)
+    .map((item) => item.index);
+  for (const i of attemptOrder) {
     if (stream || tried >= MAX_ATTEMPTS || Date.now() - started > SOFT_DEADLINE_MS) {
       left.push(i);
       continue;
