@@ -1433,7 +1433,42 @@ async function resolveManual(embed, site, label) {
       const data = r.json();
       const streamUrl = data && data.stream && data.stream.url;
       if (streamUrl) {
-        log("servidor " + label + ": URL de Dailymotion resuelta directamente");
+        let sourceInfo = "URL HLS resuelta";
+        try {
+          const streamUri = new URL(streamUrl);
+          sourceInfo += "; id=" + id + "; host=" + streamUri.hostname + "; ruta=" + streamUri.pathname.slice(-70);
+        } catch {}
+        // Diagnóstico temporal: consultar el manifiesto maestro para saber si este Dailymotion
+        // ofrece una calidad fija o varias variantes. No se modifica la URL de reproducción.
+        try {
+          const manifest = await kino.fetch(streamUrl, {
+            headers: { "User-Agent": headers["User-Agent"], Referer: "https://geo.dailymotion.com/" },
+            timeoutMs: 1800
+          });
+          if (manifest.ok) {
+            const body = manifest.text().replace(/\r/g, "");
+            const lines = body.split("\n");
+            const variants = [];
+            for (let i = 0; i < lines.length; i++) {
+              if (!/^#EXT-X-STREAM-INF:/i.test(lines[i].trim())) continue;
+              const attrs = lines[i];
+              const res = /RESOLUTION=(\d+x\d+)/i.exec(attrs);
+              const bw = /(?:AVERAGE-BANDWIDTH|BANDWIDTH)=(\d+)/i.exec(attrs);
+              const uri = (lines.slice(i + 1).find((line) => line.trim() && !line.trim().startsWith("#")) || "").trim();
+              variants.push((res ? res[1] : "resolución desconocida") +
+                (bw ? "@" + Math.round(Number(bw[1]) / 1000) + "kbps" : "") +
+                (uri ? " -> " + uri.split("?")[0].slice(-55) : ""));
+            }
+            sourceInfo += variants.length
+              ? "; variantes HLS=" + JSON.stringify(variants.slice(0, 12))
+              : (/#EXTINF:/i.test(body) ? "; playlist multimedia sin variantes (posible calidad fija)" : "; manifiesto sin variantes reconocibles");
+          } else {
+            sourceInfo += "; inspección HLS HTTP " + manifest.status;
+          }
+        } catch (e) {
+          sourceInfo += "; inspección HLS no disponible (" + String(e && e.message || e).slice(0, 70) + ")";
+        }
+        log("servidor " + label + " · " + site.name + ": Dailymotion " + sourceInfo);
         return directStream(streamUrl, label + " · " + site.name, "https://geo.dailymotion.com/", "application/x-mpegURL");
       }
       return null;
