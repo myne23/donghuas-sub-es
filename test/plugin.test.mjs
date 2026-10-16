@@ -174,21 +174,16 @@ async function withKino(pages, body) {
   }
 }
 
-test("resolve (SeriesDonghua): skips a server that gives nothing and offers the rest as lazy copies", async () => {
+test("resolve (SeriesDonghua): no abre en navegador las fuentes que no están en la lista activa", async () => {
   await withKino({}, async (plugin, captured) => {
-    const s = await plugin.resolve("sd:/gu-an-episodio-1/");
-    assert.equal(s.url, "https://cdn.example/a/index.m3u8");
-    assert.equal(s.mime, "application/x-mpegURL");
-    assert.match(s.label, /Rumble/);
-    assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1", "https://rumble.com/embed/v7eiaew/"]);
-    const lazy = await plugin.resolve("srv:1:sd:/gu-an-episodio-1/");
-    assert.equal(lazy.url, "https://cdn.example/a/index.m3u8");
+    await assert.rejects(plugin.resolve("sd:/gu-an-episodio-1/"), /ningún servidor dio video/);
+    assert.deepEqual(captured, [], "Dailymotion, OK.ru y Rumble no deben consumir timeouts de captura");
   });
 });
 
 test("resolve (MundoDonghua): reads the player address out of the packed script", async () => {
   await withKino({}, async (plugin, captured) => {
-    const s = await plugin.resolve("md:/ver/swallowed-star-3/159");
+    const s = await plugin.resolve("srv:0:md:/ver/swallowed-star-3/159");
     assert.equal(s.url, "https://cdn.example/a/index.m3u8");
     assert.deepEqual(captured, ["https://voe.sx/e/qi68ljjc49gf"]);
     assert.match(s.label, /Voe/);
@@ -251,7 +246,7 @@ test("resolve (OK.ru): prefers HLS when both HLS and DASH manifests are present"
     assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.match(stream.headers["User-Agent"], /Mozilla\/5\.0/);
     assert.deepEqual(captured, []);
-    assert.ok(stream.alternatives.length > 0 && stream.alternatives.every((item) => /^srv:\d+:sd:\//.test(item.ref)), "las demás fuentes son copias diferidas");
+    assert.ok((stream.alternatives || []).every((item) => /streamwish|filemoon/i.test(item.label)), "solo se ofrecen StreamWish y Filemoon como alternativas");
   });
 });
 
@@ -275,7 +270,7 @@ test("resolve: a direct HTTP server wins without opening the hidden browser, the
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
     assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
     assert.deepEqual(captured, [], "no usa el navegador si un servidor directo funciona");
-    assert.deepEqual(stream.alternatives.map((a) => a.ref), ["srv:0:sd:/gu-an-episodio-1/", "srv:1:sd:/gu-an-episodio-1/"]);
+    assert.deepEqual(stream.alternatives || [], [], "no se ofrecen como alternativas las fuentes que no están en la lista activa");
   });
 });
 
