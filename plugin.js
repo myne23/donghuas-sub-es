@@ -1458,6 +1458,8 @@ export async function resolve(ref) {
   let stream = null;
   let tried = 0;
   const left = [];
+  // En MundoDonghua probar las cuatro fuentes en el orden solicitado; en SeriesDonghua mantener el límite original.
+  const maxAttempts = r.site === MD ? 4 : MAX_ATTEMPTS;
   // Try fast, direct HTTP resolvers before Filemoon/Bysekoze, whose challenge flow
   // can consume ~15-20 seconds before the player even opens. Keep original indexes
   // so each lazy alternative still points to the correct server.
@@ -1484,7 +1486,7 @@ export async function resolve(ref) {
     .sort((a, b) => a.priority - b.priority || a.index - b.index)
     .map((item) => item.index);
   for (const i of attemptOrder) {
-    if (stream || tried >= MAX_ATTEMPTS || Date.now() - started > SOFT_DEADLINE_MS) {
+    if (stream || tried >= maxAttempts || Date.now() - started > SOFT_DEADLINE_MS) {
       left.push(i);
       continue;
     }
