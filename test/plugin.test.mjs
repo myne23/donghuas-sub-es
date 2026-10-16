@@ -60,6 +60,7 @@ function sites(extra = {}) {
     "https://www.mundodonghua.com/lista-donghuas": mdCard("/donghua/swallowed-star-3", "Swallowed Star 3") + `<a href="/lista-donghuas/2"><i class="fas fa-chevron-right"></i></a>`,
     "https://seriesdonghua.com/buscar.php?s=gu": sdCard("/gu-an/", "Gu An"),
     "https://www.mundodonghua.com/busquedas?donghua=gu": mdCard("/donghua/gu-an", "Gu An"),
+    "https://www.mundodonghua.com/busquedas?donghua=Gu%20An": mdCard("/donghua/gu-an", "Gu An"),
     "https://seriesdonghua.com/gu-an/": SD_SERIES,
     "https://www.mundodonghua.com/donghua/swallowed-star-3": MD_SERIES,
     "https://www.mundodonghua.com/donghua/gu-an": `<h1 class="md-detail-title">Gu An</h1><div class="md-detail-poster"><img src="/thumbs/p.jpg"></div>` + [2, 1].map((n) => `<li class="md-episode-item" data-ep="${n}"><a href="/ver/gu-an/${n}" class="md-ep-link">`).join(""),
