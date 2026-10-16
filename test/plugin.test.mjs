@@ -179,8 +179,8 @@ test("resolve (SeriesDonghua): skips a server that gives nothing and offers the 
     const s = await plugin.resolve("sd:/gu-an-episodio-1/");
     assert.equal(s.url, "https://cdn.example/a/index.m3u8");
     assert.equal(s.mime, "application/x-mpegURL");
-    assert.match(s.label, /OK\.ru/);
-    assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1", "https://ok.ru/videoembed/9"]);
+    assert.match(s.label, /Rumble/);
+    assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1", "https://rumble.com/embed/v7eiaew/"]);
     const lazy = await plugin.resolve("srv:1:sd:/gu-an-episodio-1/");
     assert.equal(lazy.url, "https://cdn.example/a/index.m3u8");
   });
@@ -206,17 +206,17 @@ test("resolve (Dailymotion): uses the direct stream API without browser capture"
   });
 });
 
-test("resolve (OK.ru): reads player metadata and prefers a direct video with required headers", async () => {
+test("resolve (OK.ru): reads player metadata and prefers HLS with required headers", async () => {
   await withKino({
     "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
-    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[{"name":"hd","url":"https://cdn.example/ok-file?token=abc"}],"hlsManifestUrl":"https://cdn.example/ok.m3u8"}}}'></div>`,
+    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[{"name":"hd","url":"https://cdn.example/ok.mp4?token=abc"}],"hlsManifestUrl":"https://cdn.example/ok.m3u8"}}}'></div>`,
   }, async (plugin, captured) => {
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
-    assert.equal(stream.url, "https://cdn.example/ok.mp4");
-    assert.equal(stream.mime, "video/mp4");
+    assert.equal(stream.url, "https://cdn.example/ok.m3u8", "con HLS disponible se prefiere HLS al archivo directo");
+    assert.equal(stream.mime, "application/x-mpegURL");
     assert.equal(stream.headers.Referer, "https://ok.ru/videoembed/9");
     assert.equal(stream.headers.Origin, "https://ok.ru");
-    assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1"]);
+    assert.deepEqual(captured, []);
   });
 });
 
@@ -251,14 +251,13 @@ test("resolve (OK.ru): prefers HLS when both HLS and DASH manifests are present"
     assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.match(stream.headers["User-Agent"], /Mozilla\/5\.0/);
     assert.deepEqual(captured, []);
-    assert.ok(stream.alternatives.some((item) => item.url === mpd && item.mime === "application/dash+xml"));
-    assert.ok(logs.some((line) => line.includes('"extension":"mpd"') && line.includes('"confirmedExtension":true')));
+    assert.ok(stream.alternatives.length > 0 && stream.alternatives.every((item) => /^srv:\d+:sd:\//.test(item.ref)), "las demás fuentes son copias diferidas");
   });
 });
 
 test("resolve (Rumble): reads its public embedJS API without browser capture", async () => {
   await withKino({
-    "https://rumble.com/embedJS/u3/?request=video&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
   }, async (plugin, captured) => {
     const stream = await plugin.resolve("srv:2:sd:/gu-an-episodio-1/");
     assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
@@ -266,6 +265,33 @@ test("resolve (Rumble): reads its public embedJS API without browser capture", a
     assert.equal(stream.headers.Referer, "https://rumble.com/embed/v7eiaew/");
     assert.deepEqual(captured, []);
   });
+});
+
+test("resolve: a direct HTTP server wins without opening the hidden browser, the rest stay lazy", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
+    assert.deepEqual(captured, [], "no usa el navegador si un servidor directo funciona");
+    assert.deepEqual(stream.alternatives.map((a) => a.ref), ["srv:0:sd:/gu-an-episodio-1/", "srv:1:sd:/gu-an-episodio-1/"]);
+  });
+});
+
+test("search also tries the original and alternative titles", async () => {
+  const { fetchImpl, asked } = sites();
+  const before = globalThis.kino;
+  globalThis.kino = {
+    lang: "es-CO", log() {}, error: (code, msg) => Object.assign(new Error(msg), { code }), storage: { get: () => null, set() {} },
+    fetch: async (url, o) => { const r = await fetchImpl(url, o); const body = await r.text(); return { ok: r.ok, status: r.status, text: () => body, json: () => JSON.parse(body) }; },
+  };
+  try {
+    const plugin = await import(pathToFileURL(join(root, "plugin.js")).href + "?t=" + Math.random());
+    const found = await plugin.search({ q: "Zzz inexistente", originalTitle: "gu", altTitles: ["gu", "Zzz inexistente"] });
+    assert.ok(found.some((item) => /Gu An/.test(item.title)), "encuentra la serie por el título original");
+    assert.equal(asked.filter((line) => line.includes("buscar.php")).length, 2, "sin repetir títulos iguales");
+  } finally { globalThis.kino = before; }
 });
 
 test("resolve fails with a message for the person when no server gives video", async () => {
