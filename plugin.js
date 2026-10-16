@@ -1516,11 +1516,8 @@ async function resolveInner(ref) {
   const servers = r.site === SD ? await sdServers(r.path) : await mdServers(r.path);
   if (!servers.length) throw kino.error("not_found", "el episodio no tiene servidores");
 
-  // En esta rama de pruebas solo se consideran las fuentes que comprobamos activas:
-  // StreamWish y Filemoon/Bysekoze. Las demás pestañas pueden seguir apareciendo en
-  // la web aunque sus reproductores estén caídos y solo provocan timeouts de 20 s.
-  const isUsableServer = (name) => /streamwish|swish|filemoon|bysekoze|fmoon/i.test(String(name || ""));
-  const usableIndexes = servers.map((server, index) => isUsableServer(server.name) ? index : -1).filter((index) => index >= 0);
+  // No filtrar pestañas del sitio: todas las fuentes deben seguir disponibles para elegirlas manualmente.
+  const allIndexes = servers.map((_, index) => index);
   if (lazy) {
     const index = Number(lazy[1]);
     // Compatibilidad con una selección manual explícita; la resolución automática y
@@ -1534,31 +1531,35 @@ async function resolveInner(ref) {
   let stream = null;
   let tried = 0;
   const left = [];
-  // En MundoDonghua probar las cuatro fuentes en el orden solicitado; en SeriesDonghua mantener el límite original.
+  // Se conserva el flujo de resolución existente; solo cambia la prioridad de las fuentes.
   const maxAttempts = r.site === MD ? 4 : MAX_ATTEMPTS;
-  // Try fast, direct HTTP resolvers before Filemoon/Bysekoze, whose challenge flow
-  // can consume ~15-20 seconds before the player even opens. Keep original indexes
-  // so each lazy alternative still points to the correct server.
+  // Los resolvers HTTP directos siguen ejecutándose primero en paralelo. Si ninguno funciona,
+  // se usa el navegador de forma secuencial según esta prioridad. Todas las fuentes restantes
+  // permanecen como alternativas manuales aunque fallen durante el intento automático.
   const priority = (name) => {
     const n = String(name || "").toLowerCase();
-    // En MundoDonghua, VOE primero; luego VidHide, Filemoon/SP2P y StreamWish.
     if (r.site === MD) {
-      if (/voe|amagi/.test(n)) return 0;
-      if (/vidhide|vhide/.test(n)) return 1;
-      if (/filemoon|bysekoze|fmoon|sp2p/.test(n)) return 2;
+      if (/filemoon|bysekoze|fmoon/.test(n)) return 0;
+      if (/voe|amagi/.test(n)) return 1;
+      if (/vidhide|vhide/.test(n)) return 2;
       if (/streamwish|swish/.test(n)) return 3;
+      if (/sp2p|strp2p/.test(n)) return 4;
+    } else {
+      if (/dailymotion/.test(n)) return 0;
+      if (/rumble/.test(n)) return 1;
+      if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
     }
-    // Orden general para SeriesDonghua y otras fuentes.
     if (/dailymotion/.test(n)) return 0;
     if (/rumble/.test(n)) return 1;
     if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
     if (/streamwish|swish/.test(n)) return 3;
     if (/vidhide|vhide/.test(n)) return 4;
     if (/filemoon|bysekoze|fmoon/.test(n)) return 5;
-    if (/voe|amagi/.test(n)) return 9;
-    return 6;
+    if (/voe|amagi/.test(n)) return 6;
+    if (/sp2p|strp2p/.test(n)) return 7;
+    return 8;
   };
-  const attemptOrder = usableIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
+  const attemptOrder = allIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
     .sort((a, b) => a.priority - b.priority || a.index - b.index)
     .map((item) => item.index);
   // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
@@ -1579,7 +1580,7 @@ async function resolveInner(ref) {
   const fast = phase1.filter(Boolean).sort((a, b) => priority(servers[a.index].name) - priority(servers[b.index].name) || a.index - b.index);
   if (fast.length) {
     stream = fast[0].stream;
-    for (const i of attemptOrder) if (i !== fast[0].index) left.push(i);
+    for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
   }
   for (const i of attemptOrder) {
     if (fast.length) break;
