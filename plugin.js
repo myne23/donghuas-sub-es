@@ -1824,6 +1824,10 @@ async function resolveInner(ref) {
     .map((item) => item.index);
   const browserTestIndexes = attemptOrder.filter((index) => isBrowserTestServer(servers[index].name));
   const hasBrowserTestServers = browserTestIndexes.length > 0;
+  // En la fusión inversa (catálogo MundoDonghua + respaldo SeriesDonghua), no bloquear
+  // la apertura automática probando capturas lentas de Filemoon/StreamWish/Voe. Se dejan
+  // en la lista de alternativas para que el usuario pueda probarlas manualmente.
+  const skipSlowBrowserAuto = !!mixedMdRef && r.site === MD;
   // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
   // que no necesitan prueba de trabajo (Byse/Filemoon va aparte, porque puede tardar 15-20 s). El navegador oculto
   // nunca corre en paralelo: sigue en la fase 2, uno por uno.
@@ -1854,6 +1858,10 @@ async function resolveInner(ref) {
     for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
   }
   for (const i of attemptOrder) {
+    if (skipSlowBrowserAuto && isBrowserTestServer(servers[i].name)) {
+      left.push(i);
+      continue;
+    }
     if (stream || Date.now() - started > SOFT_DEADLINE_MS) {
       left.push(i);
       continue;
