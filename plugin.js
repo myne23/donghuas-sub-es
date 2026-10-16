@@ -18,7 +18,8 @@ const MD = { key: "md", name: "MundoDonghua", base: "https://www.mundodonghua.co
 const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "n1mwq.org", "vidhidepro.com", "embedwish.com", "strp2p.com"];
 const MD_SERVER_NAMES = { fmoon: "Filemoon", amagi: "Voe", vhide: "VidHide", swish: "StreamWish" };
 
-const CAPTURE_MS = 20000;
+const CAPTURE_MS = 20000; // Tiempo completo cuando el usuario elige una fuente manualmente.
+const AUTO_CAPTURE_MS = 8000; // Evita que cada fuente fallida bloquee el arranque durante 20 s.
 const MAX_ATTEMPTS = 2; // servers tried inside one resolve; the others become lazy copies
 const SOFT_DEADLINE_MS = 45000; // stop starting new attempts after this (resolve has 75 s)
 
@@ -1715,7 +1716,7 @@ async function capture(site, server, options) {
   } catch {}
   let res;
   try {
-    res = await kino.browser.capture(embed, { timeoutMs: CAPTURE_MS, headers: { Referer: site.base + "/" } });
+    res = await kino.browser.capture(embed, { timeoutMs: options && options.manual ? CAPTURE_MS : AUTO_CAPTURE_MS, headers: { Referer: site.base + "/" } });
   } catch (e) {
     log("servidor " + server.name + ": " + ((e && e.code) || "error") + " al abrir el reproductor");
     return null;
@@ -1765,6 +1766,7 @@ async function resolveInner(ref) {
     // Odysee solo se intenta cuando el usuario la elige: forzar navegador oculto y saltar el resolver HTTP.
     const selectedOdysee = !!server && r.site === SD && /odysee/i.test(String(server.name || ""));
     const s = server ? await capture(r.site, server, {
+      manual: true,
       allowBrowserOnPow: true,
       ...(selectedOdysee ? { prepared: { forceBrowser: true } } : {})
     }) : null;
