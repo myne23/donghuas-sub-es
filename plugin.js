@@ -1604,7 +1604,7 @@ async function resolveInner(ref) {
     for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
   }
   for (const i of attemptOrder) {
-    if (stream || tried >= maxAttempts || Date.now() - started > SOFT_DEADLINE_MS) {
+    if (stream || Date.now() - started > SOFT_DEADLINE_MS) {
       left.push(i);
       continue;
     }
@@ -1616,6 +1616,10 @@ async function resolveInner(ref) {
         if (remaining !== fast[0].index && !left.includes(remaining)) left.push(remaining);
       }
       break;
+    }
+    if (tried >= maxAttempts) {
+      left.push(i);
+      continue;
     }
     tried++;
     const s = await capture(r.site, servers[i], { prepared: prepared.get(i) });
