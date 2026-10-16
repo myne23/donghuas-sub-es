@@ -1450,7 +1450,7 @@ export async function resolve(ref) {
   const priority = (name) => {
     const n = String(name || "").toLowerCase();
     // Orden solicitado para Donghuas Sub ES: Dailymotion, Rumble, OK.ru y VOE al final.
-    if (/dailymotion|dailymotion/.test(n)) return 0;
+    if (/dailymotion/.test(n)) return 0;
     if (/rumble/.test(n)) return 1;
     if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
     if (/voe|amagi/.test(n)) return 9;
