@@ -1810,6 +1810,7 @@ async function resolveInner(ref) {
   }
 
   let stream = null;
+  let selectedServerIndex = -1;
   let tried = 0;
   const left = [];
   // Se conserva el flujo de resolución existente; solo cambia la prioridad de las fuentes.
@@ -1890,6 +1891,7 @@ async function resolveInner(ref) {
   // no deben bloquear el inicio durante 20 s por servidor.
   if (fast.length) {
     stream = fast[0].stream;
+    selectedServerIndex = fast[0].index;
     for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
   }
   for (const i of attemptOrder) {
@@ -1920,6 +1922,7 @@ async function resolveInner(ref) {
     const s = await capture(r.site, servers[i], { prepared: prepared.get(i) });
     if (s) {
       stream = s;
+      selectedServerIndex = i;
     } else {
       // No perder una fuente fallida: puede funcionar si el usuario la elige manualmente.
       left.push(i);
@@ -1941,7 +1944,26 @@ async function resolveInner(ref) {
   }
   // Mantener las alternativas en el orden de prioridad definido, incluso si alguna falló en el intento automático.
   left.sort((a, b) => priority(servers[a].name) - priority(servers[b].name) || a - b);
-  const sdAlternatives = left.slice(0, mixedMdRef ? 4 : 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+
+  // Evitar mostrar dos entradas que llevan al mismo video de Dailymotion.
+  // Los embeds de las fuentes principales ya se obtuvieron en la fase 1, así que no añadimos
+  // peticiones de red para deduplicarlas.
+  const seenDailymotionIds = new Set();
+  const selectedPrepared = selectedServerIndex >= 0 ? prepared.get(selectedServerIndex) : null;
+  const selectedDailymotionId = dailymotionVideoId(selectedPrepared && selectedPrepared.embed);
+  if (selectedDailymotionId) seenDailymotionIds.add(selectedDailymotionId);
+  const uniqueLeft = [];
+  for (const i of left) {
+    const info = prepared.get(i);
+    const videoId = dailymotionVideoId(info && info.embed);
+    if (videoId && seenDailymotionIds.has(videoId)) {
+      log("fusión de fuentes: oculto Dailymotion duplicado " + videoId + " (" + servers[i].name + " · " + r.site.name + ")");
+      continue;
+    }
+    if (videoId) seenDailymotionIds.add(videoId);
+    uniqueLeft.push(i);
+  }
+  const sdAlternatives = uniqueLeft.slice(0, mixedMdRef ? 4 : 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
   let alternatives = sdAlternatives;
   if (mixedMdRef) {
     const secondaryRef = splitRef(mixedMdRef);
@@ -1956,10 +1978,27 @@ async function resolveInner(ref) {
           label: (servers[i].name + " · " + r.site.name).slice(0, 48),
           ref: "srv:" + i + ":" + epRef
         }));
-        const secondaryAlternatives = secondaryServers.map((server, index) => ({
-          label: (server.name + " · " + secondaryRef.site.name).slice(0, 48),
-          ref: "srv:" + index + ":" + mixedMdRef
-        }));
+        const secondaryAlternatives = [];
+        for (let index = 0; index < secondaryServers.length; index++) {
+          const server = secondaryServers[index];
+          let duplicateDailymotion = false;
+          if (/dailymotion/i.test(String(server.name || ""))) {
+            try {
+              const embed = await server.embed();
+              const videoId = dailymotionVideoId(embed);
+              if (videoId && seenDailymotionIds.has(videoId)) {
+                duplicateDailymotion = true;
+                log("fusión de fuentes: oculto Dailymotion duplicado " + videoId + " (" + server.name + " · " + secondaryRef.site.name + ")");
+              } else if (videoId) {
+                seenDailymotionIds.add(videoId);
+              }
+            } catch {}
+          }
+          if (!duplicateDailymotion) secondaryAlternatives.push({
+            label: (server.name + " · " + secondaryRef.site.name).slice(0, 48),
+            ref: "srv:" + index + ":" + mixedMdRef
+          });
+        }
         alternatives = primaryAlternatives.concat(secondaryAlternatives.slice(0, 8 - primaryAlternatives.length));
       } catch {
         log("fusión de fuentes: no pude cargar los servidores auxiliares de " + secondaryRef.site.name);
@@ -1969,6 +2008,16 @@ async function resolveInner(ref) {
   alternatives = alternatives.filter((item, index, all) => all.findIndex((other) => other.ref === item.ref) === index).slice(0, 8);
   if (alternatives.length) stream.alternatives = alternatives;
   return stream;
+}
+
+function dailymotionVideoId(embed) {
+  try {
+    const u = new URL(String(embed || ""));
+    if (!/(^|\\.)dailymotion\\.com$/i.test(u.hostname)) return "";
+    return String(u.searchParams.get("video") || (u.pathname.match(/\\/video\\/([A-Za-z0-9]+)/i) || [])[1] || "").trim();
+  } catch {
+    return "";
+  }
 }
 
 function failure() {
