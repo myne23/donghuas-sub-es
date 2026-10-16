@@ -174,10 +174,18 @@ async function withKino(pages, body) {
   }
 }
 
-test("resolve (SeriesDonghua): no abre en navegador las fuentes que no están en la lista activa", async () => {
-  await withKino({}, async (plugin, captured) => {
-    await assert.rejects(plugin.resolve("sd:/gu-an-episodio-1/"), /ningún servidor dio video/);
-    assert.deepEqual(captured, [], "Dailymotion, OK.ru y Rumble no deben consumir timeouts de captura");
+test("resolve (SeriesDonghua): conserva Dailymotion, OK.ru y Rumble como fuentes seleccionables", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
+    assert.deepEqual(captured, []);
+    const labels = (stream.alternatives || []).map((item) => item.label);
+    assert.ok(labels.some((label) => /Dailymotion/i.test(label)));
+    assert.ok(labels.some((label) => /OK\.ru/i.test(label)));
+    assert.ok(labels.some((label) => /Rumble/i.test(label)) === false, "la fuente elegida no debe duplicarse como alternativa");
   });
 });
 
@@ -270,7 +278,9 @@ test("resolve: a direct HTTP server wins without opening the hidden browser, the
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
     assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
     assert.deepEqual(captured, [], "no usa el navegador si un servidor directo funciona");
-    assert.deepEqual(stream.alternatives || [], [], "no se ofrecen como alternativas las fuentes que no están en la lista activa");
+    const labels = (stream.alternatives || []).map((item) => item.label);
+    assert.ok(labels.some((label) => /Dailymotion/i.test(label)));
+    assert.ok(labels.some((label) => /OK\.ru/i.test(label)));
   });
 });
 
