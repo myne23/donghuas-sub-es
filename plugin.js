@@ -1858,7 +1858,9 @@ async function resolveInner(ref) {
     for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
   }
   for (const i of attemptOrder) {
-    if (skipSlowBrowserAuto && isBrowserTestServer(servers[i].name)) {
+    if (skipSlowBrowserAuto) {
+      // La fusión inversa prioriza cualquier URL directa ya resuelta; las demás fuentes
+      // de MundoDonghua se ofrecen como alternativas manuales sin consumir tiempo de arranque.
       left.push(i);
       continue;
     }
