@@ -1974,7 +1974,7 @@ async function resolveInner(ref) {
           : await mdServers(secondaryRef.path);
         // Reservar espacio para ambos sitios: si llenamos primero con 8 fuentes primarias,
         // las fuentes secundarias (incluido Filemoon de MundoDonghua) nunca llegan al menú.
-        const primaryAlternatives = left.slice(0, 4).map((i) => ({
+        const primaryAlternatives = uniqueLeft.slice(0, 4).map((i) => ({
           label: (servers[i].name + " · " + r.site.name).slice(0, 48),
           ref: "srv:" + i + ":" + epRef
         }));
