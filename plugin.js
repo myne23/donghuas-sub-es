@@ -2019,6 +2019,7 @@ function dailymotionVideoId(embed) {
     return "";
   }
 }
+}
 
   }
 }
