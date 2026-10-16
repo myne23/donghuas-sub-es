@@ -1449,11 +1449,15 @@ export async function resolve(ref) {
   // so each lazy alternative still points to the correct server.
   const priority = (name) => {
     const n = String(name || "").toLowerCase();
-    if (/voe|amagi/.test(n)) return 0;
-    if (/streamwish|swish/.test(n)) return 1;
-    if (/vidhide|vhide/.test(n)) return 2;
-    if (/filemoon|bysekoze|fmoon/.test(n)) return 4;
-    return 3;
+    // Orden solicitado para Donghuas Sub ES: Dailymotion, Rumble, OK.ru y VOE al final.
+    if (/dailymotion|dailymotion/.test(n)) return 0;
+    if (/rumble/.test(n)) return 1;
+    if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
+    if (/voe|amagi/.test(n)) return 9;
+    if (/streamwish|swish/.test(n)) return 3;
+    if (/vidhide|vhide/.test(n)) return 4;
+    if (/filemoon|bysekoze|fmoon/.test(n)) return 5;
+    return 6;
   };
   const attemptOrder = servers.map((server, index) => ({ index, priority: priority(server.name) }))
     .sort((a, b) => a.priority - b.priority || a.index - b.index)
