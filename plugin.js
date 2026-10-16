@@ -195,13 +195,33 @@ function normalizeTitle(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
+    .replace(/\b(season|temporada|seasonal|part|parte|saison|cour)\s*[0-9ivx]*\b/g, " ")
+    .replace(/\b(s\s*\d+|\d+(st|nd|rd|th)\s+season)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
-async function findMatchingMdSeries(title) {
+function titleSimilarity(a, b) {
+  const x = normalizeTitle(a), y = normalizeTitle(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  const compactX = x.replace(/\s/g, ""), compactY = y.replace(/\s/g, "");
+  if (compactX === compactY) return 1;
+  const xt = new Set(x.split(" ").filter((w) => w.length > 1));
+  const yt = new Set(y.split(" ").filter((w) => w.length > 1));
+  if (!xt.size || !yt.size) return 0;
+  let common = 0;
+  for (const w of xt) if (yt.has(w)) common++;
+  const dice = (2 * common) / (xt.size + yt.size);
+  const containment = common / Math.min(xt.size, yt.size);
+  return Math.max(dice, containment >= 0.8 && Math.min(xt.size, yt.size) >= 2 ? 0.82 : 0);
+}
+
+async function findMatchingMdSeries(title, sdPath = "") {
   const key = normalizeTitle(title);
   if (!key) return null;
-  const cacheKey = "match-md:" + key.slice(0, 100);
+  const cacheKey = "match-md:" + key.replace(/\s/g, "").slice(0, 100);
   try {
     const cached = kino.storage.get(cacheKey);
     if (cached === "none") return null;
@@ -210,19 +230,31 @@ async function findMatchingMdSeries(title) {
       if (parsed && parsed.slug && parsed.title) return parsed;
     }
   } catch {}
+  const slugTitle = String(sdPath || "").split("/").filter(Boolean).pop().replace(/-/g, " ");
+  const terms = [...new Set([title, slugTitle, title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim()])].filter(Boolean);
+  const cardsBySlug = new Map();
   try {
-    const html = await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(title));
-    const cards = mdCards(html).filter((c) => !c.episode);
-    const match = cards.find((c) => normalizeTitle(c.title) === key);
+    for (const term of terms) {
+      try {
+        const html = await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(term));
+        for (const c of mdCards(html)) if (!c.episode && c.slug) cardsBySlug.set(c.slug, c);
+      } catch {}
+    }
+    const cards = Array.from(cardsBySlug.values());
+    const exact = cards.find((c) => normalizeTitle(c.title) === key || normalizeTitle(c.slug.replace(/-/g, " ")) === key);
+    const ranked = cards.map((c) => ({ c, score: Math.max(titleSimilarity(title, c.title), titleSimilarity(slugTitle, c.title)) }))
+      .sort((a, b) => b.score - a.score);
+    const match = exact || (ranked[0] && ranked[0].score >= 0.78 ? ranked[0].c : null);
     if (!match) {
-      try { kino.storage.set(cacheKey, "none", { ttlMs: 6 * 3600 * 1000 }); } catch {}
+      try { kino.storage.set(cacheKey, "none", { ttlMs: 2 * 3600 * 1000 }); } catch {}
+      log("fusión de fuentes: sin coincidencia suficientemente cercana para " + title + (cards.length ? " (mejor similitud " + ranked[0].score.toFixed(2) + ")" : " (sin candidatos de MundoDonghua)"));
       return null;
     }
     const result = { slug: match.slug, title: match.title };
     try { kino.storage.set(cacheKey, JSON.stringify(result), { ttlMs: 24 * 3600 * 1000 }); } catch {}
+    log("fusión de fuentes: coincidencia " + title + " ↔ " + match.title + " (similitud " + (exact ? "exacta" : ranked.find((x) => x.c.slug === match.slug).score.toFixed(2)) + ")");
     return result;
   } catch {
-    // Un fallo de MundoDonghua no debe impedir que SeriesDonghua siga funcionando.
     return null;
   }
 }
@@ -376,8 +408,7 @@ export async function search(query) {
   const b = unique(runs.flatMap((r) => r[1] || []));
   // SeriesDonghua es el catálogo principal: si el título coincide exactamente (normalizado),
   // se conserva su ficha y se oculta la duplicada de MundoDonghua. Títulos distintos siguen separados.
-  const primaryTitles = new Set(a.map((item) => normalizeTitle(item.title)));
-  const secondary = b.filter((item) => !primaryTitles.has(normalizeTitle(item.title)));
+  const secondary = b.filter((item) => !a.some((primary) => titleSimilarity(primary.title, item.title) >= 0.78));
   // Global search may not make item badges prominent in every Kino layout, so make the source
   // unmistakable in the result title too. Keep the canonical title inside episodes() metadata.
   const markSource = (items, source) => (items || []).map((item) => ({
@@ -421,7 +452,7 @@ async function sdEpisodes(path) {
   // Si existe la misma serie en MundoDonghua, emparejamos solo episodios con el mismo número.
   // La ficha y los metadatos siguen siendo los de SeriesDonghua; el ref mixto añade las fuentes secundarias.
   if (seriesTitle && list.length) {
-    const match = await findMatchingMdSeries(seriesTitle);
+    const match = await findMatchingMdSeries(seriesTitle, path);
     if (match) {
       try {
         const mdList = (await mdEpisodes("/donghua/" + match.slug)).episodes;
