@@ -1582,7 +1582,15 @@ async function resolveInner(ref) {
   const r = splitRef(epRef);
   if (!r) throw kino.error("not_found", "ref desconocido");
   const started = Date.now();
-  const servers = r.site === SD ? await sdServers(r.path) : await mdServers(r.path);
+  let servers;
+  try {
+    servers = r.site === SD ? await sdServers(r.path) : await mdServers(r.path);
+  } catch (e) {
+    if (mixedMdRef) {
+      try { return await resolveInner(mixedMdRef); } catch {}
+    }
+    throw e;
+  }
   if (!servers.length) {
     if (mixedMdRef) return resolveInner(mixedMdRef);
     throw kino.error("not_found", "el episodio no tiene servidores");
