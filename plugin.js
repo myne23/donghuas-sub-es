@@ -1396,7 +1396,7 @@ async function resolveManual(embed, site, label) {
       const decoded = decodeVoeConfig(encoded);
       const source = /"source"\s*:\s*"([^"]+)"/.exec(decoded);
       if (!source || !source[1]) return null;
-      const streamUrl = source[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+      let streamUrl = source[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
       streamUrl = await highestHlsVariant(streamUrl, realUrl, label);
       log("servidor " + label + ": URL de VOE resuelta directamente");
       return directStream(streamUrl, label + " · " + site.name, embed, /\.m3u8/i.test(streamUrl) ? "application/x-mpegURL" : undefined);
