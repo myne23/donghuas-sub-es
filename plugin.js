@@ -518,6 +518,50 @@ function directStream(url, label, referer, mime) {
   if (!url || !/^https?:\/\//i.test(url)) return null;
   return { url, label: String(label).slice(0, 48), headers: referer ? { Referer: referer } : {}, mime: mime || (/\.m3u8(?:$|[?#])/i.test(url) ? "application/x-mpegURL" : undefined) };
 }
+
+// VOE only: when its source is an HLS master playlist, explicitly choose the highest
+// advertised variant. If inspection fails or the URL is already a media playlist,
+// preserve the original URL so playback still has a fallback.
+async function highestHlsVariant(masterUrl, referer, label) {
+  if (!/\.m3u8(?:$|[?#])/i.test(masterUrl)) return masterUrl;
+  try {
+    const response = await kino.fetch(masterUrl, {
+      headers: { "User-Agent": "Mozilla/5.0", ...(referer ? { Referer: referer } : {}) },
+      timeoutMs: 8000
+    });
+    if (!response.ok) return masterUrl;
+    const lines = response.text().replace(/\r/g, "").split("\n");
+    const variants = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!/^#EXT-X-STREAM-INF:/i.test(line)) continue;
+      const attrs = line.slice(line.indexOf(":") + 1);
+      const resolution = /(?:^|,)RESOLUTION=(\d+)x(\d+)/i.exec(attrs);
+      const bandwidth = /(?:^|,)AVERAGE-BANDWIDTH=(\d+)/i.exec(attrs) || /(?:^|,)BANDWIDTH=(\d+)/i.exec(attrs);
+      let uri = "";
+      for (let j = i + 1; j < lines.length; j++) {
+        const candidate = lines[j].trim();
+        if (candidate && candidate[0] !== "#") { uri = candidate; break; }
+      }
+      if (!uri) continue;
+      let url;
+      try { url = new URL(uri, masterUrl).href; } catch { continue; }
+      const width = resolution ? Number(resolution[1]) : 0;
+      const height = resolution ? Number(resolution[2]) : 0;
+      variants.push({ url, width, height, pixels: width * height, bandwidth: bandwidth ? Number(bandwidth[1]) : 0 });
+    }
+    if (!variants.length) return masterUrl;
+    variants.sort((a, b) => b.pixels - a.pixels || b.bandwidth - a.bandwidth);
+    const best = variants[0];
+    log("servidor " + label + ": VOE elige la variante HLS máxima disponible" +
+      (best.width && best.height ? " " + best.width + "x" + best.height : "") +
+      (best.bandwidth ? " (" + Math.round(best.bandwidth / 1000) + " kbps)" : ""));
+    return best.url;
+  } catch (e) {
+    log("servidor " + label + ": no pude inspeccionar calidades HLS de VOE; mantengo la URL original");
+    return masterUrl;
+  }
+}
 function decodeBase64Text(value) {
   try {
     const raw = atob(value);
@@ -1353,6 +1397,7 @@ async function resolveManual(embed, site, label) {
       const source = /"source"\s*:\s*"([^"]+)"/.exec(decoded);
       if (!source || !source[1]) return null;
       const streamUrl = source[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+      streamUrl = await highestHlsVariant(streamUrl, realUrl, label);
       log("servidor " + label + ": URL de VOE resuelta directamente");
       return directStream(streamUrl, label + " · " + site.name, embed, /\.m3u8/i.test(streamUrl) ? "application/x-mpegURL" : undefined);
     }
@@ -1465,10 +1510,10 @@ export async function resolve(ref) {
   // so each lazy alternative still points to the correct server.
   const priority = (name) => {
     const n = String(name || "").toLowerCase();
-    // En MundoDonghua: VidHide, VOE, Filemoon/SP2P y StreamWish, en ese orden.
+    // En MundoDonghua, VOE primero; luego VidHide, Filemoon/SP2P y StreamWish.
     if (r.site === MD) {
-      if (/vidhide|vhide/.test(n)) return 0;
-      if (/voe|amagi/.test(n)) return 1;
+      if (/voe|amagi/.test(n)) return 0;
+      if (/vidhide|vhide/.test(n)) return 1;
       if (/filemoon|bysekoze|fmoon|sp2p/.test(n)) return 2;
       if (/streamwish|swish/.test(n)) return 3;
     }
