@@ -1639,6 +1639,10 @@ async function resolveInner(ref) {
     }
   }
   if (!stream) throw failure();
+  // Las fuentes omitidas del intento automático (Odysee) siguen apareciendo como alternativas manuales.
+  for (const i of allIndexes) {
+    if (!automaticIndexes.includes(i) && !left.includes(i)) left.push(i);
+  }
   // Mantener las alternativas en el orden de prioridad definido, incluso si alguna falló en el intento automático.
   left.sort((a, b) => priority(servers[a].name) - priority(servers[b].name) || a - b);
   const alternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
