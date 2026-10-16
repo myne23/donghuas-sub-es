@@ -1094,7 +1094,11 @@ async function resolveBysekoze(embed, site, label, headers) {
       expiresInSeconds: 300
     };
   } catch (e) {
-    log("servidor " + label + ": Bysekoze HTTP no completó la resolución (" + String(e && e.message || e).slice(0, 80) + ")");
+    const message = String(e && e.message || e);
+    log("servidor " + label + ": Bysekoze HTTP no completó la resolución (" + message.slice(0, 80) + ")");
+    // When PoW itself times out, opening the same player in the browser has
+    // already proved unproductive and adds another full 20-second wait.
+    if (/PoW agotó el tiempo/i.test(message)) return { skipBrowser: true, reason: "PoW agotó el tiempo" };
     return null;
   }
 }
@@ -1392,9 +1396,15 @@ async function capture(site, server) {
     return null;
   }
   const manual = await resolveManual(embed, site, server.name);
-  if (manual) return manual;
-  // sp2p stays HTTP-only. Byse/Filemoon now falls back to capture because its
-  // player obtains the signed HLS URL through an encrypted playback API after JS runs.
+  if (manual) {
+    if (manual.skipBrowser) {
+      log("servidor " + server.name + ": omito captura de navegador tras agotar PoW; continúo con la siguiente fuente");
+      return null;
+    }
+    return manual;
+  }
+  // sp2p stays HTTP-only. Byse/Filemoon falls back to capture when the direct
+  // HTTP resolver fails for reasons other than an exhausted PoW challenge.
   try {
     const host = new URL(embed).hostname.toLowerCase();
     if (host === "strp2p.com" || host.endsWith(".strp2p.com")) {
