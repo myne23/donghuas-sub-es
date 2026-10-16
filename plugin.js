@@ -235,7 +235,7 @@ function titleSimilarity(a, b) {
 async function findMatchingMdSeries(title, sdPath = "") {
   const key = normalizeTitle(title);
   if (!key) return null;
-  const cacheKey = "match-md-v4:" + key.replace(/\s/g, "").slice(0, 100);
+  const cacheKey = "match-md-v5:" + key.replace(/\s/g, "").slice(0, 100);
   try {
     const cached = kino.storage.get(cacheKey);
     if (cached === "none") return null;
@@ -245,6 +245,26 @@ async function findMatchingMdSeries(title, sdPath = "") {
     }
   } catch {}
   const slugTitle = String(sdPath || "").split("/").filter(Boolean).pop().replace(/-/g, " ");
+
+  // Primera opción: comprobar la ficha de MundoDonghua usando el mismo slug.
+  // Evita depender del buscador del sitio cuando ambas páginas comparten la URL canónica.
+  const directSlug = String(sdPath || "").split("/").filter(Boolean).pop() || "";
+  if (directSlug) {
+    try {
+      const directPath = "/donghua/" + directSlug;
+      const directHtml = await getPage(MD, directPath);
+      const directTitle = text(first(/<h1 class="md-detail-title"[^>]*>([\s\S]*?)<\/h1>/, directHtml))
+        || text(first(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i, directHtml));
+      const directScore = titleSimilarity(title, directTitle);
+      if (directTitle && (normalizeTitle(title) === normalizeTitle(directTitle) || directScore >= 0.78)) {
+        const result = { slug: directSlug, title: directTitle };
+        try { kino.storage.set(cacheKey, JSON.stringify(result), { ttlMs: 24 * 3600 * 1000 }); } catch {}
+        log("fusión de fuentes: coincidencia por slug " + title + " ↔ " + directTitle);
+        return result;
+      }
+    } catch {}
+  }
+
   // Títulos alternativos conocidos. MundoDonghua usa "Please Spare, My Life" para
   // Spare Me, Great Lord!, y cada temporada tiene una ficha separada.
   const titleAliases = {
