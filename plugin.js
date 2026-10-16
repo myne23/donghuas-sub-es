@@ -1465,7 +1465,10 @@ async function capture(site, server, options) {
     log("servidor " + server.name + ": reproductor no admitido (" + where + ")");
     return null;
   }
-  const manual = prepared && prepared.manualDone ? prepared.manual : await resolveManual(embed, site, server.name);
+  // Prueba temporal: StreamWish usa únicamente captura del navegador oculto.
+  // El resto de servidores conserva su resolución directa actual.
+  const forceBrowser = !!(prepared && prepared.forceBrowser);
+  const manual = forceBrowser ? null : (prepared && prepared.manualDone ? prepared.manual : await resolveManual(embed, site, server.name));
   if (manual) {
     if (manual.skipBrowser) {
       if (!allowBrowserOnPow) {
@@ -1558,8 +1561,15 @@ async function resolveInner(ref) {
     if (/sp2p|strp2p/.test(n)) return 7;
     return 8;
   };
+  const isStreamWish = (name) => /streamwish|swish/i.test(String(name || ""));
   const attemptOrder = allIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
-    .sort((a, b) => a.priority - b.priority || a.index - b.index)
+    .sort((a, b) => {
+      // En esta prueba, intenta StreamWish con navegador primero para poder medirlo.
+      if (r.site === MD && isStreamWish(servers[a.index].name) !== isStreamWish(servers[b.index].name)) {
+        return isStreamWish(servers[a.index].name) ? -1 : 1;
+      }
+      return a.priority - b.priority || a.index - b.index;
+    })
     .map((item) => item.index);
   // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
   // que no necesitan prueba de trabajo (Byse/Filemoon va aparte, porque puede tardar 15-20 s). El navegador oculto
@@ -1571,6 +1581,11 @@ async function resolveInner(ref) {
     try { embed = await server.embed(); } catch { embed = ""; }
     if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
     if (isPow(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
+    if (isStreamWish(server.name)) {
+      // No resolver HTTP directo para StreamWish durante esta prueba: se medirá la captura oculta.
+      prepared.set(index, { embed, manual: null, manualDone: true, forceBrowser: true });
+      return null;
+    }
     let manual = null;
     try { manual = await resolveManual(embed, r.site, server.name); } catch { manual = null; }
     prepared.set(index, { embed, manual, manualDone: true });
