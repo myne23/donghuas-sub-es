@@ -1525,7 +1525,12 @@ async function resolveInner(ref) {
     const index = Number(lazy[1]);
     // Compatibilidad con cualquier fuente elegida manualmente, incluidas las que fallaron automáticamente.
     const server = servers[index];
-    const s = server ? await capture(r.site, server, { allowBrowserOnPow: true }) : null;
+    // Odysee solo se intenta cuando el usuario la elige: forzar navegador oculto y saltar el resolver HTTP.
+    const selectedOdysee = !!server && r.site === SD && /odysee/i.test(String(server.name || ""));
+    const s = server ? await capture(r.site, server, {
+      allowBrowserOnPow: true,
+      ...(selectedOdysee ? { prepared: { forceBrowser: true } } : {})
+    }) : null;
     if (!s) throw failure();
     return s;
   }
@@ -1564,7 +1569,9 @@ async function resolveInner(ref) {
   const isStreamWish = (name) => /streamwish|swish/i.test(String(name || ""));
   const isFilemoon = (name) => /filemoon|bysekoze|fmoon/i.test(String(name || ""));
   const isBrowserTestServer = (name) => isStreamWish(name) || isFilemoon(name);
-  const attemptOrder = allIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
+  // Odysee no se prueba automáticamente: queda disponible como alternativa manual en SeriesDonghua.
+  const automaticIndexes = allIndexes.filter((index) => !(r.site === SD && /odysee/i.test(String(servers[index].name || ""))));
+  const attemptOrder = automaticIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
     .sort((a, b) => {
       // En esta prueba, probar primero StreamWish y Filemoon/Bysekoze con navegador oculto en ambos sitios.
       const aTarget = isBrowserTestServer(servers[a.index].name);
