@@ -1191,10 +1191,12 @@ async function resolveManual(embed, site, label) {
       log("servidor " + label + ": metadatos OK.ru keys=" + JSON.stringify(metadataShape) + " hls=" + JSON.stringify(hlsFields) + " videos=" + JSON.stringify(videoSummary).slice(0, 1100));
       const rank = (v) => {
         const quality = String(v.name || v.quality || "").toLowerCase();
-        if (/1080|full/.test(quality)) return 0;
-        if (/720|hd/.test(quality)) return 1;
-        if (/480|sd/.test(quality)) return 2;
-        return 3;
+        const resolution = /(?:^|\\D)(4320|2160|1440|1080|960|720|540|480|360|240)(?:\\D|$)/.exec(quality);
+        if (resolution) return -Number(resolution[1]);
+        if (/full/.test(quality)) return -1080;
+        if (/hd/.test(quality)) return -720;
+        if (/sd/.test(quality)) return -480;
+        return 0;
       };
       const directVideo = (v) => typeof v.url === "string" && /^https:\/\//i.test(v.url) && /\.(?:mp4|webm)(?:[?#]|$)/i.test(v.url);
       videos.sort((a, b) => rank(a) - rank(b));
