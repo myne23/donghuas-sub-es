@@ -1,10 +1,10 @@
 {
   "id": "donghuas-sub-es",
   "name": "Donghuas Sub ES",
-  "version": "0.1.56",
+  "version": "0.1.57",
   "apiVersion": 6,
   "entry": "plugin.js",
-  "description": "Donghuas subtitulados al español, con fusión bidireccional de fuentes entre los catálogos de SeriesDonghua y MundoDonghua.",
+  "description": "Donghuas subtitulados al español, con fusión bidireccional de fuentes y tiempos de espera reducidos para capturas automáticas fallidas.",
   "author": "myne23",
   "homepage": "https://github.com/myne23/donghuas-sub-es",
   "categories": [
