@@ -122,27 +122,41 @@ function sdCards(html) {
 // MundoDonghua: <div class="md-card"> (or "md-card limited") with an href to /donghua/slug or /ver/slug/n[/token].
 function mdCards(html) {
   const out = [];
-  const re = /<div class="md-card( limited)?">\s*<a href="([^"]+)">([\s\S]*?)<\/a>\s*<\/div>/g;
-  let m;
-  while ((m = re.exec(html))) {
-    const href = pathOf(m[2]);
-    const b = m[3];
+  const seen = new Set();
+  const addCard = (hrefRaw, body, limited = false) => {
+    const href = pathOf(hrefRaw);
     const ver = /^\/ver\/([^/]+)\/(\d+)(?:\/(.+))?$/.exec(href);
     const don = /^\/donghua\/([^/?#]+)/.exec(href);
     const slug = ver ? ver[1] : don ? don[1] : "";
-    if (!slug) continue;
-    const alt = decode(first(/<img[^>]+alt="([^"]*)"/, b)).trim();
-    const t = text(first(/<h[1-6] class="md-card-title"[^>]*>([\s\S]*?)<\/h[1-6]>/, b));
+    if (!slug) return;
+    const key = slug + ":" + (ver ? ver[2] : "series");
+    if (seen.has(key)) return;
+    seen.add(key);
+    const alt = decode(first(/<img\b[^>]*\balt=["']([^"']*)["']/i, body)).trim();
+    const heading = text(first(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]>/i, body));
+    const titleAttr = decode(first(/\btitle=["']([^"']+)["']/i, body)).trim();
+    const title = (alt || heading || titleAttr || slug.replace(/-/g, " "))
+      .replace(/\s+Episodio\s+\d+\s*$/i, "").trim();
     out.push({
       slug,
       episode: ver ? Number(ver[2]) : 0,
       epPath: ver ? href : "",
-      limited: !!m[1] && !!ver,
-      kindLabel: text(first(/class="md-card-badge[^"]*">([\s\S]*?)<\/span>/, b)),
-      title: alt || t.replace(/\s+Episodio\s+\d+\s*$/i, ""),
-      poster: abs(MD, first(/<img[^>]+src="([^"]+)"/, b)),
+      limited: !!limited && !!ver,
+      kindLabel: text(first(/class=["'][^"']*md-card-badge[^"']*["'][^>]*>([\s\S]*?)<\/span>/i, body)),
+      title,
+      poster: abs(MD, first(/<img\b[^>]*\bsrc=["']([^"']+)["']/i, body)),
     });
-  }
+  };
+
+  // Estructura habitual de las tarjetas.
+  const re = /<div class="md-card( limited)?">\s*<a href="([^"]+)">([\s\S]*?)<\/a>\s*<\/div>/g;
+  let m;
+  while ((m = re.exec(html))) addCard(m[2], m[3], !!m[1]);
+
+  // Respaldo para páginas de búsqueda cuyo HTML cambia las clases o el contenedor.
+  // Solo acepta enlaces de ficha/episodio propios de MundoDonghua.
+  const anchors = /<a\b[^>]*\bhref=["']((?:https?:\/\/www\.mundodonghua\.com)?\/(?:donghua\/[^"'?#]+|ver\/[^"'?#]+))["'][^>]*>([\s\S]*?)<\/a>/gi;
+  while ((m = anchors.exec(html))) addCard(m[1], m[2], /class=["'][^"']*limited/i.test(m[0]));
   return out;
 }
 
