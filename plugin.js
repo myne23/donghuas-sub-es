@@ -1528,8 +1528,9 @@ async function resolveInner(ref) {
 
   if (lazy) {
     const index = Number(lazy[1]);
-    const server = usableIndexes.includes(index) ? servers[index] : null;
-    // No intentar proveedores que ya comprobamos caídos; evitar su captura lenta.
+    // Compatibilidad con una selección manual explícita; la resolución automática y
+    // las alternativas visibles siguen limitadas a StreamWish/Filemoon.
+    const server = servers[index];
     const s = server ? await capture(r.site, server, { allowBrowserOnPow: true }) : null;
     if (!s) throw failure();
     return s;
