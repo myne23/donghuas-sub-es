@@ -1516,9 +1516,20 @@ async function resolveInner(ref) {
   const servers = r.site === SD ? await sdServers(r.path) : await mdServers(r.path);
   if (!servers.length) throw kino.error("not_found", "el episodio no tiene servidores");
 
+  // En esta rama de pruebas solo se consideran las fuentes que comprobamos activas:
+  // StreamWish y Filemoon/Bysekoze. Las demás pestañas pueden seguir apareciendo en
+  // la web aunque sus reproductores estén caídos y solo provocan timeouts de 20 s.
+  const isUsableServer = (name) => /streamwish|swish|filemoon|bysekoze|fmoon/i.test(String(name || ""));
+  const usableIndexes = servers.map((server, index) => isUsableServer(server.name) ? index : -1).filter((index) => index >= 0);
+  if (!usableIndexes.length) {
+    log("resolve: no hay fuentes conocidas como activas (StreamWish/Filemoon)");
+    throw failure();
+  }
+
   if (lazy) {
-    const server = servers[Number(lazy[1])];
-    // Al elegir una fuente manualmente, permitir el fallback de navegador incluso si su PoW falló.
+    const index = Number(lazy[1]);
+    const server = usableIndexes.includes(index) ? servers[index] : null;
+    // No intentar proveedores que ya comprobamos caídos; evitar su captura lenta.
     const s = server ? await capture(r.site, server, { allowBrowserOnPow: true }) : null;
     if (!s) throw failure();
     return s;
@@ -1551,7 +1562,7 @@ async function resolveInner(ref) {
     if (/voe|amagi/.test(n)) return 9;
     return 6;
   };
-  const attemptOrder = servers.map((server, index) => ({ index, priority: priority(server.name) }))
+  const attemptOrder = usableIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
     .sort((a, b) => a.priority - b.priority || a.index - b.index)
     .map((item) => item.index);
   // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
@@ -1559,7 +1570,8 @@ async function resolveInner(ref) {
   // nunca corre en paralelo: sigue en la fase 2, uno por uno.
   const prepared = new Map();
   const isPow = (embed) => { try { const h = new URL(embed).hostname.toLowerCase(); return /(^|\.)(bysekoze\.com|n1mwq\.org)$/.test(h); } catch { return false; } };
-  const phase1 = await Promise.all(servers.map(async (server, index) => {
+  const phase1 = await Promise.all(usableIndexes.map(async (index) => {
+    const server = servers[index];
     let embed = "";
     try { embed = await server.embed(); } catch { embed = ""; }
     if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
