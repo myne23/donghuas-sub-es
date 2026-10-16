@@ -62,7 +62,10 @@ function sites(extra = {}) {
     "https://www.mundodonghua.com/busquedas?donghua=gu": mdCard("/donghua/gu-an", "Gu An"),
     "https://seriesdonghua.com/gu-an/": SD_SERIES,
     "https://www.mundodonghua.com/donghua/swallowed-star-3": MD_SERIES,
+    "https://www.mundodonghua.com/donghua/gu-an": `<h1 class="md-detail-title">Gu An</h1><div class="md-detail-poster"><img src="/thumbs/p.jpg"></div>` + [2, 1].map((n) => `<li class="md-episode-item" data-ep="${n}"><a href="/ver/gu-an/${n}" class="md-ep-link">`).join(""),
     "https://seriesdonghua.com/gu-an-episodio-1/": SD_EPISODE,
+    "https://www.mundodonghua.com/ver/gu-an/1": MD_EPISODE,
+    "https://www.mundodonghua.com/ver/gu-an/2": MD_EPISODE,
     "https://www.mundodonghua.com/ver/swallowed-star-3/159": MD_EPISODE,
     ...extra,
   };
@@ -128,13 +131,14 @@ test("browse pages the latest episodes of SeriesDonghua", async () => {
 test("search asks both sites", async () => {
   const { out, asked } = await run("search", ["gu"]);
   const items = Array.isArray(out) ? out : out.items;
-  assert.deepEqual(items.map((i) => i.id).sort(), ["md-gu-an", "sd-gu-an"]);
+  assert.deepEqual(items.map((i) => i.id), ["sd-gu-an"], "el resultado de SeriesDonghua oculta el duplicado exacto de MundoDonghua");
   assert.equal(asked.length, 2);
 });
 
 test("episodes of each site", async () => {
   const sd = (await run("episodes", ["sd:/gu-an/"])).out;
   assert.deepEqual(sd.episodes.map((e) => e.number), [1, 2]);
+  assert.ok(sd.episodes.every((e) => e.ref.startsWith("mix:")), "los episodios coincidentes llevan referencia mixta");
   assert.equal(sd.episodes[0].airDate, "2026-10-11");
   assert.equal(sd.series.title, "Gu An");
   const md = (await run("episodes", ["md:/donghua/swallowed-star-3"])).out;
@@ -297,6 +301,20 @@ test("search also tries the original and alternative titles", async () => {
     assert.ok(found.some((item) => /Gu An/.test(item.title)), "encuentra la serie por el título original");
     assert.equal(asked.filter((line) => line.includes("buscar.php")).length, 2, "sin repetir títulos iguales");
   } finally { globalThis.kino = before; }
+});
+
+
+test("resolve: a matching SeriesDonghua episode exposes MundoDonghua sources as alternatives", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("mix:sd:/gu-an-episodio-1/|md:/ver/gu-an/1");
+    assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
+    assert.ok((stream.alternatives || []).some((item) => /Voe · MundoDonghua/.test(item.label)));
+    assert.ok((stream.alternatives || []).some((item) => /Dailymotion · SeriesDonghua/.test(item.label)));
+    assert.deepEqual(captured, []);
+  });
 });
 
 test("resolve fails with a message for the person when no server gives video", async () => {
