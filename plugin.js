@@ -516,7 +516,7 @@ async function sdEpisodes(path, skipFusion = false) {
     const match = await findMatchingMdSeries(seriesTitle, path);
     if (match) {
       try {
-        const mdList = (await mdEpisodes("/donghua/" + match.slug)).episodes;
+        const mdList = (await mdEpisodes("/donghua/" + match.slug, true)).episodes;
         const mdByNumber = new Map(mdList.map((ep) => [Number(ep.number), ep.ref]));
         for (const ep of list) {
           const mdRef = mdByNumber.get(Number(ep.number));
@@ -593,7 +593,7 @@ async function findMatchingSdSeries(title, mdPath = "") {
   }
 }
 
-async function mdEpisodes(path) {
+async function mdEpisodes(path, skipFusion = false) {
   const html = await getPage(MD, path);
   const slug = (/^\/donghua\/([^/?#]+)/.exec(path) || [])[1] || "";
   const byNumber = new Map();
@@ -612,7 +612,7 @@ async function mdEpisodes(path) {
   const list = Array.from(byNumber.values()).sort((a, b) => a.number - b.number);
   // Inversa: al abrir desde el catálogo de MundoDonghua, añadir SeriesDonghua como fuentes auxiliares.
   const seriesTitle = text(first(/<h1 class="md-detail-title"[^>]*>([\s\S]*?)<\/h1>/, html)) || "";
-  if (seriesTitle && list.length) {
+  if (!skipFusion && seriesTitle && list.length) {
     const match = await findMatchingSdSeries(seriesTitle, path);
     if (match) {
       try {
@@ -1879,7 +1879,7 @@ async function resolveInner(ref) {
     // Si ninguna fuente principal resolvió, intentamos la copia de MundoDonghua como respaldo.
     try {
       const fallback = await resolveInner(mixedMdRef);
-      const sdAlternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + SD.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+      const sdAlternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
       fallback.alternatives = (fallback.alternatives || []).concat(sdAlternatives).slice(0, 8);
       return fallback;
     } catch {}
