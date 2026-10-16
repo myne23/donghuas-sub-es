@@ -188,6 +188,45 @@ function unique(items) {
   return out;
 }
 
+// Solo se fusionan títulos idénticos tras normalizar mayúsculas, acentos y puntuación.
+// No se intenta adivinar temporadas ni alias que puedan representar series distintas.
+function normalizeTitle(value) {
+  return decode(String(value || ""))
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+async function findMatchingMdSeries(title) {
+  const key = normalizeTitle(title);
+  if (!key) return null;
+  const cacheKey = "match-md:" + key.slice(0, 100);
+  try {
+    const cached = kino.storage.get(cacheKey);
+    if (cached === "none") return null;
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.slug && parsed.title) return parsed;
+    }
+  } catch {}
+  try {
+    const html = await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(title));
+    const cards = mdCards(html).filter((c) => !c.episode);
+    const match = cards.find((c) => normalizeTitle(c.title) === key);
+    if (!match) {
+      try { kino.storage.set(cacheKey, "none", { ttlMs: 6 * 3600 * 1000 }); } catch {}
+      return null;
+    }
+    const result = { slug: match.slug, title: match.title };
+    try { kino.storage.set(cacheKey, JSON.stringify(result), { ttlMs: 24 * 3600 * 1000 }); } catch {}
+    return result;
+  } catch {
+    // Un fallo de MundoDonghua no debe impedir que SeriesDonghua siga funcionando.
+    return null;
+  }
+}
+
 // ---------- pagination ----------
 
 // The address of the next page of a listing.
@@ -335,13 +374,17 @@ export async function search(query) {
   ])));
   const a = unique(runs.flatMap((r) => r[0] || []));
   const b = unique(runs.flatMap((r) => r[1] || []));
+  // SeriesDonghua es el catálogo principal: si el título coincide exactamente (normalizado),
+  // se conserva su ficha y se oculta la duplicada de MundoDonghua. Títulos distintos siguen separados.
+  const primaryTitles = new Set(a.map((item) => normalizeTitle(item.title)));
+  const secondary = b.filter((item) => !primaryTitles.has(normalizeTitle(item.title)));
   // Global search may not make item badges prominent in every Kino layout, so make the source
   // unmistakable in the result title too. Keep the canonical title inside episodes() metadata.
   const markSource = (items, source) => (items || []).map((item) => ({
     ...item,
     title: "[" + source + "] " + item.title,
   }));
-  return markSource(a, SD.name).concat(markSource(b, MD.name)).slice(0, 100);
+  return markSource(a, SD.name).concat(markSource(secondary, MD.name)).slice(0, 100);
 }
 
 // ---------- episodes ----------
@@ -374,12 +417,33 @@ async function sdEpisodes(path) {
     list.push({ number: n, ref: "sd:" + pathOf(m[2]), airDate: ymd(first(/fa-calendar-alt"><\/i>\s*([\d-]+)/, m[3])) });
   }
   list.sort((a, b) => a.number - b.number);
+  const seriesTitle = text(first(/<h1 class="hero-title"[^>]*>([\s\S]*?)<\/h1>/, html)) || "";
+  // Si existe la misma serie en MundoDonghua, emparejamos solo episodios con el mismo número.
+  // La ficha y los metadatos siguen siendo los de SeriesDonghua; el ref mixto añade las fuentes secundarias.
+  if (seriesTitle && list.length) {
+    const match = await findMatchingMdSeries(seriesTitle);
+    if (match) {
+      try {
+        const mdList = (await mdEpisodes("/donghua/" + match.slug)).episodes;
+        const mdByNumber = new Map(mdList.map((ep) => [Number(ep.number), ep.ref]));
+        for (const ep of list) {
+          const mdRef = mdByNumber.get(Number(ep.number));
+          if (mdRef && String(ep.ref).startsWith("sd:")) {
+            ep.ref = "mix:" + ep.ref + "|" + mdRef;
+          }
+        }
+        log("fusión de fuentes: " + seriesTitle + " · " + list.filter((ep) => String(ep.ref).startsWith("mix:")).length + " episodios coincidentes de MundoDonghua");
+      } catch {
+        // La lista principal de episodios no depende de que la secundaria responda.
+      }
+    }
+  }
   const genres = [];
   const gre = /class="genre-pill">\s*([^<]+?)\s*<\/a>/g;
   while ((m = gre.exec(html))) genres.push(decode(m[1]).slice(0, 30));
   return {
     series: {
-      title: text(first(/<h1 class="hero-title"[^>]*>([\s\S]*?)<\/h1>/, html)) || undefined,
+      title: seriesTitle || undefined,
       poster: abs(SD, first(/class="hero-poster"[^>]*src="([^"]+)"/, html) || first(/<img src="([^"]+)" alt="[^"]*" class="hero-poster"/, html)),
       backdrop: abs(SD, first(/<meta property="og:image" content="([^"]+)"/, html)),
       overview: text(first(/Sinopsis\s*<\/h2>\s*<div[^>]*>\s*<p>([\s\S]*?)<\/p>/, html)).slice(0, 1000) || undefined,
@@ -1512,12 +1576,17 @@ async function capture(site, server, options) {
 async function resolveInner(ref) {
   await null;
   const lazy = /^srv:(\d+):((?:sd|md):\/.*)$/.exec(String(ref));
-  const epRef = lazy ? lazy[2] : String(ref);
+  const mixed = !lazy ? /^mix:(sd:\/[^|]+)\|(md:\/.*)$/.exec(String(ref)) : null;
+  const epRef = lazy ? lazy[2] : mixed ? mixed[1] : String(ref);
+  const mixedMdRef = mixed ? mixed[2] : "";
   const r = splitRef(epRef);
   if (!r) throw kino.error("not_found", "ref desconocido");
   const started = Date.now();
   const servers = r.site === SD ? await sdServers(r.path) : await mdServers(r.path);
-  if (!servers.length) throw kino.error("not_found", "el episodio no tiene servidores");
+  if (!servers.length) {
+    if (mixedMdRef) return resolveInner(mixedMdRef);
+    throw kino.error("not_found", "el episodio no tiene servidores");
+  }
 
   // No filtrar pestañas del sitio: todas las fuentes deben seguir disponibles para elegirlas manualmente.
   const allIndexes = servers.map((_, index) => index);
@@ -1638,6 +1707,15 @@ async function resolveInner(ref) {
       left.push(i);
     }
   }
+  if (!stream && mixedMdRef) {
+    // Si ninguna fuente principal resolvió, intentamos la copia de MundoDonghua como respaldo.
+    try {
+      const fallback = await resolveInner(mixedMdRef);
+      const sdAlternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + SD.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+      fallback.alternatives = (fallback.alternatives || []).concat(sdAlternatives).slice(0, 8);
+      return fallback;
+    } catch {}
+  }
   if (!stream) throw failure();
   // Las fuentes omitidas del intento automático (Odysee) siguen apareciendo como alternativas manuales.
   for (const i of allIndexes) {
@@ -1645,7 +1723,24 @@ async function resolveInner(ref) {
   }
   // Mantener las alternativas en el orden de prioridad definido, incluso si alguna falló en el intento automático.
   left.sort((a, b) => priority(servers[a].name) - priority(servers[b].name) || a - b);
-  const alternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+  const sdAlternatives = left.slice(0, mixedMdRef ? 4 : 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+  let alternatives = sdAlternatives;
+  if (mixedMdRef) {
+    const mdMatch = splitRef(mixedMdRef);
+    if (mdMatch && mdMatch.site === MD) {
+      try {
+        const mdSourceList = await mdServers(mdMatch.path);
+        const mdAlternatives = mdSourceList.map((server, index) => ({
+          label: (server.name + " · " + MD.name).slice(0, 48),
+          ref: "srv:" + index + ":" + mixedMdRef
+        }));
+        alternatives = sdAlternatives.concat(mdAlternatives.slice(0, Math.max(0, 8 - sdAlternatives.length)));
+      } catch {
+        log("fusión de fuentes: no pude cargar los servidores de MundoDonghua");
+      }
+    }
+  }
+  alternatives = alternatives.filter((item, index, all) => all.findIndex((other) => other.ref === item.ref) === index).slice(0, 8);
   if (alternatives.length) stream.alternatives = alternatives;
   return stream;
 }
