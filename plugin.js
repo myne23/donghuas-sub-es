@@ -1846,7 +1846,10 @@ async function resolveInner(ref) {
     return manual && !manual.skipBrowser ? { index, stream: manual } : null;
   }));
   const fast = phase1.filter(Boolean).sort((a, b) => priority(servers[a.index].name) - priority(servers[b.index].name) || a.index - b.index);
-  if (fast.length && !hasBrowserTestServers) {
+  // Si un resolver directo ya encontró un video válido, usarlo inmediatamente.
+  // Las fuentes que requieren captura lenta siguen disponibles como alternativas manuales;
+  // no deben bloquear el inicio durante 20 s por servidor.
+  if (fast.length) {
     stream = fast[0].stream;
     for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
   }
