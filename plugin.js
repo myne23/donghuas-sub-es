@@ -221,7 +221,7 @@ function titleSimilarity(a, b) {
 async function findMatchingMdSeries(title, sdPath = "") {
   const key = normalizeTitle(title);
   if (!key) return null;
-  const cacheKey = "match-md:" + key.replace(/\s/g, "").slice(0, 100);
+  const cacheKey = "match-md-v2:" + key.replace(/\s/g, "").slice(0, 100);
   try {
     const cached = kino.storage.get(cacheKey);
     if (cached === "none") return null;
