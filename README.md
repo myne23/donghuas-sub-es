@@ -35,3 +35,12 @@ La versión 0.1.13 también intenta extraer URLs de medios por HTTP directo en V
 - El HTML inicial de Bysekoze no incluye la URL HLS: el reproductor la solicita mediante una API de playback cifrada y luego descarga un manifiesto HLS firmado.
 - El resolver sigue intentando HTTP directo primero, pero ahora permite la captura de navegador de Kino como respaldo para que JavaScript ejecute el flujo de reproducción y se detecte la URL HLS real. Se declara también el host del reproductor `n1mwq.org`.
 - `strp2p.com` continúa siendo HTTP-only; no se cambia el comportamiento de los demás servidores.
+
+### Estado actual (0.1.43)
+
+- **Orden de resolución:** Dailymotion, Rumble, OK.ru, StreamWish, VidHide y Filemoon/Byse; VOE al final en SeriesDonghua. En MundoDonghua: VOE, VidHide, Filemoon/sp2p y StreamWish. Las demás fuentes quedan como copias diferidas (`srv:<n>:<episodio>`).
+- **Dos fases:** primero se piden en paralelo las direcciones de todos los reproductores y se resuelven por HTTP los que no necesitan prueba de trabajo; si uno funciona, no se abre el navegador oculto. Si ninguno funciona, la captura de navegador y Byse/Filemoon siguen como antes, uno por uno.
+- **MundoDonghua:** las direcciones de los servidores se guardan 10 minutos en `kino.storage`, así las copias diferidas no vuelven a bajar y desempaquetar la página.
+- **Búsqueda:** además de `q`, prueba el título original y los alternativos (hasta 3 títulos distintos).
+- **Vencimiento:** si la URL firmada trae `expires`/`exp`/`e` en segundos epoch, se informa `expiresInSeconds`.
+- **Pruebas:** `node --test test/plugin.test.mjs` y `node sdk/validate.mjs .`.

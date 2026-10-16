@@ -320,11 +320,21 @@ export async function browse(ref, cursor) {
 export async function search(query) {
   await null;
   const q = String((query && query.q) || "").trim();
-  if (!q) return [];
-  const [a, b] = await Promise.all([
-    safe("buscar-sd", async () => unique(sdCards(await getPage(SD, "/buscar.php?s=" + encodeURIComponent(q))).filter((c) => !c.episode).map(sdItem))),
-    safe("buscar-md", async () => unique(mdCards(await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(q))).filter((c) => !c.episode).map(mdItem))),
-  ]);
+  // Los sitios solo conocen algunos títulos: probamos también el título original y los alternativos (máx. 3 en total).
+  const terms = [];
+  const seenTerms = new Set();
+  for (const raw of [q, query && query.originalTitle].concat((query && Array.isArray(query.altTitles)) ? query.altTitles : [])) {
+    const t = String(raw || "").trim().slice(0, 120);
+    const key = t.toLowerCase();
+    if (t && !seenTerms.has(key) && terms.length < 3) { seenTerms.add(key); terms.push(t); }
+  }
+  if (!terms.length) return [];
+  const runs = await Promise.all(terms.map((term) => Promise.all([
+    safe("buscar-sd", async () => unique(sdCards(await getPage(SD, "/buscar.php?s=" + encodeURIComponent(term))).filter((c) => !c.episode).map(sdItem))),
+    safe("buscar-md", async () => unique(mdCards(await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(term))).filter((c) => !c.episode).map(mdItem))),
+  ])));
+  const a = unique(runs.flatMap((r) => r[0] || []));
+  const b = unique(runs.flatMap((r) => r[1] || []));
   // Global search may not make item badges prominent in every Kino layout, so make the source
   // unmistakable in the result title too. Keep the canonical title inside episodes() metadata.
   const markSource = (items, source) => (items || []).map((item) => ({
@@ -443,23 +453,36 @@ function unpackAll(html) {
 
 // MundoDonghua: the page hides each player's address inside packed scripts; tabs name the servers.
 async function mdServers(path) {
-  const html = await getPage(MD, path);
-  const embeds = {};
-  for (const code of unpackAll(html)) {
-    const re = /\$\("#(\w+)_play"\)\.append\("<iframe src='([^']+)'/g;
-    let m;
-    while ((m = re.exec(code))) embeds[m[1]] = decode(m[2]);
+  // Las copias diferidas "srv:<n>:<episodio>" vuelven a pedir los servidores: guardamos las direcciones 10 min
+  // para no bajar y desempaquetar de nuevo la misma página.
+  const cacheKey = "md-embeds:" + path;
+  let list = null;
+  try {
+    const raw = kino.storage.get(cacheKey);
+    if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.length) list = parsed; }
+  } catch {}
+  if (!list) {
+    const html = await getPage(MD, path);
+    const embeds = {};
+    for (const code of unpackAll(html)) {
+      const re = /\$\("#(\w+)_play"\)\.append\("<iframe src='([^']+)'/g;
+      let m;
+      while ((m = re.exec(code))) embeds[m[1]] = decode(m[2]);
+    }
+    list = [];
+    const tabs = /id="(\w+)_tab"/g;
+    let t;
+    while ((t = tabs.exec(html))) {
+      const id = t[1];
+      if (embeds[id]) list.push({ id, url: embeds[id] });
+    }
+    // A page whose tabs we could not read: still offer what the scripts held.
+    if (!list.length) for (const id of Object.keys(embeds)) list.push({ id, url: embeds[id] });
+    if (list.length) {
+      try { kino.storage.set(cacheKey, JSON.stringify(list), { ttlMs: 10 * 60 * 1000 }); } catch {}
+    }
   }
-  const servers = [];
-  const tabs = /id="(\w+)_tab"/g;
-  let t;
-  while ((t = tabs.exec(html))) {
-    const id = t[1];
-    if (embeds[id]) servers.push({ name: MD_SERVER_NAMES[id] || id, embed: async () => embeds[id] });
-  }
-  // A page whose tabs we could not read: still offer what the scripts held.
-  if (!servers.length) for (const id of Object.keys(embeds)) servers.push({ name: MD_SERVER_NAMES[id] || id, embed: async () => embeds[id] });
-  return servers;
+  return list.map((entry) => ({ name: MD_SERVER_NAMES[entry.id] || entry.id, embed: async () => entry.url }));
 }
 
 // SeriesDonghua: the server tabs carry a video id and an index; the player address comes from an API call.
@@ -1421,9 +1444,10 @@ async function resolveManual(embed, site, label) {
 // Opens one player in the hidden browser and returns the video it requested, or null.
 async function capture(site, server, options) {
   const allowBrowserOnPow = !!(options && options.allowBrowserOnPow);
+  const prepared = options && options.prepared;
   let embed = "";
   try {
-    embed = await server.embed();
+    embed = prepared && typeof prepared.embed === "string" ? prepared.embed : await server.embed();
   } catch (e) {
     log("servidor " + server.name + ": no dio la dirección del reproductor");
     return null;
@@ -1441,7 +1465,7 @@ async function capture(site, server, options) {
     log("servidor " + server.name + ": reproductor no admitido (" + where + ")");
     return null;
   }
-  const manual = await resolveManual(embed, site, server.name);
+  const manual = prepared && prepared.manualDone ? prepared.manual : await resolveManual(embed, site, server.name);
   if (manual) {
     if (manual.skipBrowser) {
       if (!allowBrowserOnPow) {
@@ -1482,7 +1506,7 @@ async function capture(site, server, options) {
   return stream;
 }
 
-export async function resolve(ref) {
+async function resolveInner(ref) {
   await null;
   const lazy = /^srv:(\d+):((?:sd|md):\/.*)$/.exec(String(ref));
   const epRef = lazy ? lazy[2] : String(ref);
@@ -1530,13 +1554,34 @@ export async function resolve(ref) {
   const attemptOrder = servers.map((server, index) => ({ index, priority: priority(server.name) }))
     .sort((a, b) => a.priority - b.priority || a.index - b.index)
     .map((item) => item.index);
+  // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
+  // que no necesitan prueba de trabajo (Byse/Filemoon va aparte, porque puede tardar 15-20 s). El navegador oculto
+  // nunca corre en paralelo: sigue en la fase 2, uno por uno.
+  const prepared = new Map();
+  const isPow = (embed) => { try { const h = new URL(embed).hostname.toLowerCase(); return /(^|\.)(bysekoze\.com|n1mwq\.org)$/.test(h); } catch { return false; } };
+  const phase1 = await Promise.all(servers.map(async (server, index) => {
+    let embed = "";
+    try { embed = await server.embed(); } catch { embed = ""; }
+    if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
+    if (isPow(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
+    let manual = null;
+    try { manual = await resolveManual(embed, r.site, server.name); } catch { manual = null; }
+    prepared.set(index, { embed, manual, manualDone: true });
+    return manual && !manual.skipBrowser ? { index, stream: manual } : null;
+  }));
+  const fast = phase1.filter(Boolean).sort((a, b) => priority(servers[a.index].name) - priority(servers[b.index].name) || a.index - b.index);
+  if (fast.length) {
+    stream = fast[0].stream;
+    for (const i of attemptOrder) if (i !== fast[0].index) left.push(i);
+  }
   for (const i of attemptOrder) {
+    if (fast.length) break;
     if (stream || tried >= maxAttempts || Date.now() - started > SOFT_DEADLINE_MS) {
       left.push(i);
       continue;
     }
     tried++;
-    const s = await capture(r.site, servers[i]);
+    const s = await capture(r.site, servers[i], { prepared: prepared.get(i) });
     if (s) {
       stream = s;
     } else {
@@ -1556,4 +1601,29 @@ function failure() {
   return kino.error("unavailable", "ningún servidor dio video", {
     userMessage: say("No se pudo abrir ningún servidor de este episodio. Prueba otro servidor o inténtalo más tarde.", "No server of this episode could be opened. Try another server or try again later."),
   });
+}
+
+// Si la URL firmada trae su propio vencimiento (expires/exp/e en segundos epoch), se lo avisamos a Kino
+// para que renueve la fuente en vez de cortarse a mitad del episodio.
+function expiryFromUrl(url) {
+  try {
+    const u = new URL(String(url));
+    for (const key of ["expires", "expiry", "exp", "e", "Expires"]) {
+      const raw = u.searchParams.get(key);
+      if (raw && /^\d{10}$/.test(raw)) {
+        const left = Number(raw) - Math.floor(Date.now() / 1000);
+        if (left > 30) return Math.min(left, 86400);
+      }
+    }
+  } catch {}
+  return 0;
+}
+
+export async function resolve(ref) {
+  const stream = await resolveInner(ref);
+  if (stream && typeof stream === "object" && stream.expiresInSeconds == null) {
+    const left = expiryFromUrl(stream.url);
+    if (left) stream.expiresInSeconds = left;
+  }
+  return stream;
 }
