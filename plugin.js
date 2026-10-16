@@ -1521,11 +1521,6 @@ async function resolveInner(ref) {
   // la web aunque sus reproductores estén caídos y solo provocan timeouts de 20 s.
   const isUsableServer = (name) => /streamwish|swish|filemoon|bysekoze|fmoon/i.test(String(name || ""));
   const usableIndexes = servers.map((server, index) => isUsableServer(server.name) ? index : -1).filter((index) => index >= 0);
-  if (!usableIndexes.length) {
-    log("resolve: no hay fuentes conocidas como activas (StreamWish/Filemoon)");
-    throw failure();
-  }
-
   if (lazy) {
     const index = Number(lazy[1]);
     // Compatibilidad con una selección manual explícita; la resolución automática y
@@ -1571,8 +1566,7 @@ async function resolveInner(ref) {
   // nunca corre en paralelo: sigue en la fase 2, uno por uno.
   const prepared = new Map();
   const isPow = (embed) => { try { const h = new URL(embed).hostname.toLowerCase(); return /(^|\.)(bysekoze\.com|n1mwq\.org)$/.test(h); } catch { return false; } };
-  const phase1 = await Promise.all(usableIndexes.map(async (index) => {
-    const server = servers[index];
+  const phase1 = await Promise.all(servers.map(async (server, index) => {
     let embed = "";
     try { embed = await server.embed(); } catch { embed = ""; }
     if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
