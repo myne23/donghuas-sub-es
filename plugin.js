@@ -1915,7 +1915,9 @@ async function resolveInner(ref) {
         const secondaryServers = secondaryRef.site === SD
           ? await sdServers(secondaryRef.path)
           : await mdServers(secondaryRef.path);
-        const primaryAlternatives = left.slice(0, 8).map((i) => ({
+        // Reservar espacio para ambos sitios: si llenamos primero con 8 fuentes primarias,
+        // las fuentes secundarias (incluido Filemoon de MundoDonghua) nunca llegan al menú.
+        const primaryAlternatives = left.slice(0, 4).map((i) => ({
           label: (servers[i].name + " · " + r.site.name).slice(0, 48),
           ref: "srv:" + i + ":" + epRef
         }));
@@ -1923,7 +1925,7 @@ async function resolveInner(ref) {
           label: (server.name + " · " + secondaryRef.site.name).slice(0, 48),
           ref: "srv:" + index + ":" + mixedMdRef
         }));
-        alternatives = primaryAlternatives.concat(secondaryAlternatives.slice(0, Math.max(0, 8 - primaryAlternatives.length)));
+        alternatives = primaryAlternatives.concat(secondaryAlternatives.slice(0, 8 - primaryAlternatives.length));
       } catch {
         log("fusión de fuentes: no pude cargar los servidores auxiliares de " + secondaryRef.site.name);
       }
