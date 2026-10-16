@@ -1520,8 +1520,7 @@ async function resolveInner(ref) {
   const allIndexes = servers.map((_, index) => index);
   if (lazy) {
     const index = Number(lazy[1]);
-    // Compatibilidad con una selección manual explícita; la resolución automática y
-    // las alternativas visibles siguen limitadas a StreamWish/Filemoon.
+    // Compatibilidad con cualquier fuente elegida manualmente, incluidas las que fallaron automáticamente.
     const server = servers[index];
     const s = server ? await capture(r.site, server, { allowBrowserOnPow: true }) : null;
     if (!s) throw failure();
