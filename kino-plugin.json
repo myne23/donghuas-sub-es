@@ -1,7 +1,7 @@
 {
   "id": "donghuas-sub-es",
   "name": "Donghuas Sub ES",
-  "version": "0.1.52",
+  "version": "0.1.53",
   "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Donghuas subtitulados al español, con SeriesDonghua como catálogo principal y fuentes de MundoDonghua combinadas mediante coincidencias flexibles y títulos alternativos.",
