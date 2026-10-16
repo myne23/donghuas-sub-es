@@ -261,9 +261,16 @@ async function findMatchingMdSeries(title, sdPath = "") {
       }
     }
     const cards = Array.from(cardsBySlug.values());
-    const exact = cards.find((c) => normalizeTitle(c.title) === key || normalizeTitle(c.slug.replace(/-/g, " ")) === key);
-    const ranked = cards.map((c) => ({ c, score: Math.max(titleSimilarity(title, c.title), titleSimilarity(slugTitle, c.title)) }))
-      .sort((a, b) => b.score - a.score);
+    const matchTitles = [title, slugTitle, ...aliasTerms];
+    const normalizedAliases = new Set(matchTitles.map(normalizeTitle).filter(Boolean));
+    const exact = cards.find((c) =>
+      normalizedAliases.has(normalizeTitle(c.title)) ||
+      normalizedAliases.has(normalizeTitle(c.slug.replace(/-/g, " ")))
+    );
+    const ranked = cards.map((c) => ({
+      c,
+      score: Math.max(...matchTitles.map((candidate) => titleSimilarity(candidate, c.title))),
+    })).sort((a, b) => b.score - a.score);
     const match = exact || (ranked[0] && ranked[0].score >= 0.78 ? ranked[0].c : null);
     if (!match) {
       try { kino.storage.set(cacheKey, "none", { ttlMs: 2 * 3600 * 1000 }); } catch {}
