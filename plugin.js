@@ -1449,7 +1449,9 @@ export async function resolve(ref) {
   // so each lazy alternative still points to the correct server.
   const priority = (name) => {
     const n = String(name || "").toLowerCase();
-    // Orden solicitado para Donghuas Sub ES: Dailymotion, Rumble, OK.ru y VOE al final.
+    // En MundoDonghua, Filemoon/SP2P va primero si está disponible; las demás fuentes quedan como respaldo.
+    if (r.site === MD && /filemoon|bysekoze|fmoon|sp2p/.test(n)) return -1;
+    // Orden general para el resto de fuentes: Dailymotion, Rumble, OK.ru y VOE al final.
     if (/dailymotion/.test(n)) return 0;
     if (/rumble/.test(n)) return 1;
     if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
