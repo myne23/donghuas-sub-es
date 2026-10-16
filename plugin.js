@@ -2012,8 +2012,8 @@ async function resolveInner(ref) {
 
 function dailymotionVideoId(embed) {
   try {
-    const u = new URL(String(embed || ""));
-    if (!/(^|\\.)dailymotion\\.com$/i.test(u.hostname)) return "";
+    if (!/(^|\.)dailymotion\.com$/i.test(u.hostname)) return "";
+    return String(u.searchParams.get("video") || (u.pathname.match(/\/video\/([A-Za-z0-9]+)/i) || [])[1] || "").trim();
     return String(u.searchParams.get("video") || (u.pathname.match(/\\/video\\/([A-Za-z0-9]+)/i) || [])[1] || "").trim();
   } catch {
     return "";
