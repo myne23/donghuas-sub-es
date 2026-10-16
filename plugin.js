@@ -1465,8 +1465,8 @@ async function capture(site, server, options) {
     log("servidor " + server.name + ": reproductor no admitido (" + where + ")");
     return null;
   }
-  // Prueba temporal: StreamWish y VidHide usan captura del navegador oculto.
-  // El resto de servidores conserva su resolución directa actual.
+  // Prueba temporal: StreamWish y Filemoon/Bysekoze usan captura del navegador oculto.
+  // VidHide y el resto de servidores conservan su resolución directa actual.
   const forceBrowser = !!(prepared && prepared.forceBrowser);
   const manual = forceBrowser ? null : (prepared && prepared.manualDone ? prepared.manual : await resolveManual(embed, site, server.name));
   if (manual) {
@@ -1562,11 +1562,11 @@ async function resolveInner(ref) {
     return 8;
   };
   const isStreamWish = (name) => /streamwish|swish/i.test(String(name || ""));
-  const isVidHide = (name) => /vidhide|vhide/i.test(String(name || ""));
-  const isBrowserTestServer = (name) => isStreamWish(name) || isVidHide(name);
+  const isFilemoon = (name) => /filemoon|bysekoze|fmoon/i.test(String(name || ""));
+  const isBrowserTestServer = (name) => isStreamWish(name) || isFilemoon(name);
   const attemptOrder = allIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
     .sort((a, b) => {
-      // En esta prueba, probar primero StreamWish y VidHide con navegador oculto en ambos sitios.
+      // En esta prueba, probar primero StreamWish y Filemoon/Bysekoze con navegador oculto en ambos sitios.
       const aTarget = isBrowserTestServer(servers[a.index].name);
       const bTarget = isBrowserTestServer(servers[b.index].name);
       if (aTarget !== bTarget) return aTarget ? -1 : 1;
@@ -1587,12 +1587,13 @@ async function resolveInner(ref) {
     let embed = "";
     try { embed = await server.embed(); } catch { embed = ""; }
     if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
-    if (isPow(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
     if (isBrowserTestServer(server.name)) {
-      // No resolver HTTP directo para StreamWish/VidHide durante esta prueba: medir la captura oculta.
+      // No resolver HTTP directo para StreamWish/Filemoon durante esta prueba: medir la captura oculta.
+      // Esto también evita esperar al PoW de Bysekoze antes de medir el navegador.
       prepared.set(index, { embed, manual: null, manualDone: true, forceBrowser: true });
       return null;
     }
+    if (isPow(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
     let manual = null;
     try { manual = await resolveManual(embed, r.site, server.name); } catch { manual = null; }
     prepared.set(index, { embed, manual, manualDone: true });
