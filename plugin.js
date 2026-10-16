@@ -1465,7 +1465,7 @@ async function capture(site, server, options) {
     log("servidor " + server.name + ": reproductor no admitido (" + where + ")");
     return null;
   }
-  // Prueba temporal: StreamWish usa únicamente captura del navegador oculto.
+  // Prueba temporal: StreamWish y VidHide usan captura del navegador oculto.
   // El resto de servidores conserva su resolución directa actual.
   const forceBrowser = !!(prepared && prepared.forceBrowser);
   const manual = forceBrowser ? null : (prepared && prepared.manualDone ? prepared.manual : await resolveManual(embed, site, server.name));
@@ -1562,15 +1562,22 @@ async function resolveInner(ref) {
     return 8;
   };
   const isStreamWish = (name) => /streamwish|swish/i.test(String(name || ""));
+  const isVidHide = (name) => /vidhide|vhide/i.test(String(name || ""));
+  const isBrowserTestServer = (name) => isStreamWish(name) || isVidHide(name);
   const attemptOrder = allIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
     .sort((a, b) => {
-      // En esta prueba, intenta StreamWish con navegador primero para poder medirlo.
-      if (r.site === MD && isStreamWish(servers[a.index].name) !== isStreamWish(servers[b.index].name)) {
+      // En esta prueba, probar primero StreamWish y VidHide con navegador oculto en ambos sitios.
+      const aTarget = isBrowserTestServer(servers[a.index].name);
+      const bTarget = isBrowserTestServer(servers[b.index].name);
+      if (aTarget !== bTarget) return aTarget ? -1 : 1;
+      if (aTarget && bTarget && isStreamWish(servers[a.index].name) !== isStreamWish(servers[b.index].name)) {
         return isStreamWish(servers[a.index].name) ? -1 : 1;
       }
       return a.priority - b.priority || a.index - b.index;
     })
     .map((item) => item.index);
+  const browserTestIndexes = attemptOrder.filter((index) => isBrowserTestServer(servers[index].name));
+  const hasBrowserTestServers = browserTestIndexes.length > 0;
   // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
   // que no necesitan prueba de trabajo (Byse/Filemoon va aparte, porque puede tardar 15-20 s). El navegador oculto
   // nunca corre en paralelo: sigue en la fase 2, uno por uno.
@@ -1581,8 +1588,8 @@ async function resolveInner(ref) {
     try { embed = await server.embed(); } catch { embed = ""; }
     if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
     if (isPow(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
-    if (isStreamWish(server.name)) {
-      // No resolver HTTP directo para StreamWish durante esta prueba: se medirá la captura oculta.
+    if (isBrowserTestServer(server.name)) {
+      // No resolver HTTP directo para StreamWish/VidHide durante esta prueba: medir la captura oculta.
       prepared.set(index, { embed, manual: null, manualDone: true, forceBrowser: true });
       return null;
     }
@@ -1592,15 +1599,23 @@ async function resolveInner(ref) {
     return manual && !manual.skipBrowser ? { index, stream: manual } : null;
   }));
   const fast = phase1.filter(Boolean).sort((a, b) => priority(servers[a.index].name) - priority(servers[b.index].name) || a.index - b.index);
-  if (fast.length) {
+  if (fast.length && !hasBrowserTestServers) {
     stream = fast[0].stream;
     for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
   }
   for (const i of attemptOrder) {
-    if (fast.length) break;
     if (stream || tried >= maxAttempts || Date.now() - started > SOFT_DEADLINE_MS) {
       left.push(i);
       continue;
+    }
+    // Primero medir los servidores elegidos con navegador. Si fallan, conservar el resolver directo
+    // que ya encontró otra fuente como fallback antes de probar servidores adicionales.
+    if (fast.length && hasBrowserTestServers && tried >= browserTestIndexes.length) {
+      stream = fast[0].stream;
+      for (const remaining of allIndexes) {
+        if (remaining !== fast[0].index && !left.includes(remaining)) left.push(remaining);
+      }
+      break;
     }
     tried++;
     const s = await capture(r.site, servers[i], { prepared: prepared.get(i) });
