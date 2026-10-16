@@ -1374,7 +1374,8 @@ async function resolveManual(embed, site, label) {
 }
 
 // Opens one player in the hidden browser and returns the video it requested, or null.
-async function capture(site, server) {
+async function capture(site, server, options) {
+  const allowBrowserOnPow = !!(options && options.allowBrowserOnPow);
   let embed = "";
   try {
     embed = await server.embed();
@@ -1398,10 +1399,14 @@ async function capture(site, server) {
   const manual = await resolveManual(embed, site, server.name);
   if (manual) {
     if (manual.skipBrowser) {
-      log("servidor " + server.name + ": omito captura de navegador tras agotar PoW; continúo con la siguiente fuente");
-      return null;
+      if (!allowBrowserOnPow) {
+        log("servidor " + server.name + ": omito captura de navegador tras agotar PoW; continúo con la siguiente fuente");
+        return null;
+      }
+      log("servidor " + server.name + ": PoW agotado; permito captura de navegador porque se seleccionó manualmente");
+    } else {
+      return manual;
     }
-    return manual;
   }
   // sp2p stays HTTP-only. Byse/Filemoon falls back to capture when the direct
   // HTTP resolver fails for reasons other than an exhausted PoW challenge.
@@ -1444,7 +1449,8 @@ export async function resolve(ref) {
 
   if (lazy) {
     const server = servers[Number(lazy[1])];
-    const s = server ? await capture(r.site, server) : null;
+    // Al elegir una fuente manualmente, permitir el fallback de navegador incluso si su PoW falló.
+    const s = server ? await capture(r.site, server, { allowBrowserOnPow: true }) : null;
     if (!s) throw failure();
     return s;
   }
@@ -1457,16 +1463,21 @@ export async function resolve(ref) {
   // so each lazy alternative still points to the correct server.
   const priority = (name) => {
     const n = String(name || "").toLowerCase();
-    // En MundoDonghua, Filemoon/SP2P va primero si está disponible; las demás fuentes quedan como respaldo.
-    if (r.site === MD && /filemoon|bysekoze|fmoon|sp2p/.test(n)) return -1;
-    // Orden general para el resto de fuentes: Dailymotion, Rumble, OK.ru y VOE al final.
+    // En MundoDonghua: VidHide, VOE, Filemoon/SP2P y StreamWish, en ese orden.
+    if (r.site === MD) {
+      if (/vidhide|vhide/.test(n)) return 0;
+      if (/voe|amagi/.test(n)) return 1;
+      if (/filemoon|bysekoze|fmoon|sp2p/.test(n)) return 2;
+      if (/streamwish|swish/.test(n)) return 3;
+    }
+    // Orden general para SeriesDonghua y otras fuentes.
     if (/dailymotion/.test(n)) return 0;
     if (/rumble/.test(n)) return 1;
     if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
-    if (/voe|amagi/.test(n)) return 9;
     if (/streamwish|swish/.test(n)) return 3;
     if (/vidhide|vhide/.test(n)) return 4;
     if (/filemoon|bysekoze|fmoon/.test(n)) return 5;
+    if (/voe|amagi/.test(n)) return 9;
     return 6;
   };
   const attemptOrder = servers.map((server, index) => ({ index, priority: priority(server.name) }))
@@ -1479,9 +1490,16 @@ export async function resolve(ref) {
     }
     tried++;
     const s = await capture(r.site, servers[i]);
-    if (s) stream = s;
+    if (s) {
+      stream = s;
+    } else {
+      // No perder una fuente fallida: puede funcionar si el usuario la elige manualmente.
+      left.push(i);
+    }
   }
   if (!stream) throw failure();
+  // Mantener las alternativas en el orden de prioridad definido, incluso si alguna falló en el intento automático.
+  left.sort((a, b) => priority(servers[a].name) - priority(servers[b].name) || a - b);
   const alternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
   if (alternatives.length) stream.alternatives = alternatives;
   return stream;
