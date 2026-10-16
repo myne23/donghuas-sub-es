@@ -254,7 +254,7 @@ test("resolve (OK.ru): prefers HLS when both HLS and DASH manifests are present"
     assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.match(stream.headers["User-Agent"], /Mozilla\/5\.0/);
     assert.deepEqual(captured, []);
-    assert.ok((stream.alternatives || []).every((item) => /streamwish|filemoon/i.test(item.label)), "solo se ofrecen StreamWish y Filemoon como alternativas");
+    assert.ok((stream.alternatives || []).length > 0, "las demás pestañas siguen disponibles como alternativas manuales");
   });
 });
 
