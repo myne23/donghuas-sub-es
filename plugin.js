@@ -221,7 +221,7 @@ function titleSimilarity(a, b) {
 async function findMatchingMdSeries(title, sdPath = "") {
   const key = normalizeTitle(title);
   if (!key) return null;
-  const cacheKey = "match-md-v2:" + key.replace(/\s/g, "").slice(0, 100);
+  const cacheKey = "match-md-v3:" + key.replace(/\s/g, "").slice(0, 100);
   try {
     const cached = kino.storage.get(cacheKey);
     if (cached === "none") return null;
@@ -231,14 +231,34 @@ async function findMatchingMdSeries(title, sdPath = "") {
     }
   } catch {}
   const slugTitle = String(sdPath || "").split("/").filter(Boolean).pop().replace(/-/g, " ");
-  const terms = [...new Set([title, slugTitle, title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim()])].filter(Boolean);
+  // Títulos alternativos conocidos. MundoDonghua usa "Please Spare, My Life" para
+  // Spare Me, Great Lord!, y cada temporada tiene una ficha separada.
+  const titleAliases = {
+    "spare me great lord": ["Please Spare, My Life", "Please Spare, My Life 2", "Please Spare, My Life 3"],
+    "spare me great lord!": ["Please Spare, My Life", "Please Spare, My Life 2", "Please Spare, My Life 3"],
+    "please spare my life": ["Spare Me, Great Lord", "Spare Me, Great Lord!", "Please Spare, My Life 2", "Please Spare, My Life 3"],
+    "please spare my life 2": ["Spare Me, Great Lord 2", "Spare Me, Great Lord!", "Please Spare, My Life"],
+    "please spare my life 3": ["Spare Me, Great Lord 3", "Spare Me, Great Lord!", "Please Spare, My Life"],
+  };
+  const aliasKey = normalizeTitle(title).replace(/\s+(?:[23])$/, "");
+  const aliasTerms = titleAliases[normalizeTitle(title)] || titleAliases[aliasKey] || [];
+  const terms = [...new Set([title, slugTitle, title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim(), ...aliasTerms])].filter(Boolean);
   const cardsBySlug = new Map();
   try {
     for (const term of terms) {
-      try {
-        const html = await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(term));
-        for (const c of mdCards(html)) if (!c.episode && c.slug) cardsBySlug.set(c.slug, c);
-      } catch {}
+      // La búsqueda actual de MundoDonghua usa /busquedas/TITULO; mantenemos el
+      // endpoint antiguo como respaldo por si el sitio cambia de ruta.
+      const urls = [
+        MD.base + "/busquedas/" + encodeURIComponent(term),
+        MD.base + "/busquedas?donghua=" + encodeURIComponent(term),
+      ];
+      for (const url of urls) {
+        try {
+          const html = await getPage(MD, url);
+          for (const c of mdCards(html)) if (!c.episode && c.slug) cardsBySlug.set(c.slug, c);
+          if (cardsBySlug.size) break;
+        } catch {}
+      }
     }
     const cards = Array.from(cardsBySlug.values());
     const exact = cards.find((c) => normalizeTitle(c.title) === key || normalizeTitle(c.slug.replace(/-/g, " ")) === key);
