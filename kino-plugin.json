@@ -1,10 +1,10 @@
 {
   "id": "donghuas-sub-es",
   "name": "Donghuas Sub ES",
-  "version": "0.1.62",
+  "version": "0.1.63",
   "apiVersion": 6,
   "entry": "plugin.js",
-  "description": "Donghuas subtitulados al español, con fusión bidireccional de fuentes, deduplicación de videos Dailymotion y tiempos de espera reducidos para capturas automáticas fallidas.",
+  "description": "Donghuas subtitulados al español, con fusión bidireccional de fuentes y deduplicación de videos Dailymotion.",
   "author": "myne23",
   "homepage": "https://github.com/myne23/donghuas-sub-es",
   "categories": [
