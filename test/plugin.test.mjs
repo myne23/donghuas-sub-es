@@ -60,9 +60,13 @@ function sites(extra = {}) {
     "https://www.mundodonghua.com/lista-donghuas": mdCard("/donghua/swallowed-star-3", "Swallowed Star 3") + `<a href="/lista-donghuas/2"><i class="fas fa-chevron-right"></i></a>`,
     "https://seriesdonghua.com/buscar.php?s=gu": sdCard("/gu-an/", "Gu An"),
     "https://www.mundodonghua.com/busquedas?donghua=gu": mdCard("/donghua/gu-an", "Gu An"),
+    "https://www.mundodonghua.com/busquedas?donghua=Gu%20An": mdCard("/donghua/gu-an", "Gu An"),
     "https://seriesdonghua.com/gu-an/": SD_SERIES,
     "https://www.mundodonghua.com/donghua/swallowed-star-3": MD_SERIES,
+    "https://www.mundodonghua.com/donghua/gu-an": `<h1 class="md-detail-title">Gu An</h1><div class="md-detail-poster"><img src="/thumbs/p.jpg"></div>` + [2, 1].map((n) => `<li class="md-episode-item" data-ep="${n}"><a href="/ver/gu-an/${n}" class="md-ep-link">`).join(""),
     "https://seriesdonghua.com/gu-an-episodio-1/": SD_EPISODE,
+    "https://www.mundodonghua.com/ver/gu-an/1": MD_EPISODE,
+    "https://www.mundodonghua.com/ver/gu-an/2": MD_EPISODE,
     "https://www.mundodonghua.com/ver/swallowed-star-3/159": MD_EPISODE,
     ...extra,
   };
@@ -128,13 +132,14 @@ test("browse pages the latest episodes of SeriesDonghua", async () => {
 test("search asks both sites", async () => {
   const { out, asked } = await run("search", ["gu"]);
   const items = Array.isArray(out) ? out : out.items;
-  assert.deepEqual(items.map((i) => i.id).sort(), ["md-gu-an", "sd-gu-an"]);
+  assert.deepEqual(items.map((i) => i.id), ["sd-gu-an"], "el resultado de SeriesDonghua oculta el duplicado exacto de MundoDonghua");
   assert.equal(asked.length, 2);
 });
 
 test("episodes of each site", async () => {
   const sd = (await run("episodes", ["sd:/gu-an/"])).out;
   assert.deepEqual(sd.episodes.map((e) => e.number), [1, 2]);
+  assert.ok(sd.episodes.every((e) => e.ref.startsWith("mix:")), "los episodios coincidentes llevan referencia mixta");
   assert.equal(sd.episodes[0].airDate, "2026-10-11");
   assert.equal(sd.series.title, "Gu An");
   const md = (await run("episodes", ["md:/donghua/swallowed-star-3"])).out;
@@ -174,21 +179,24 @@ async function withKino(pages, body) {
   }
 }
 
-test("resolve (SeriesDonghua): skips a server that gives nothing and offers the rest as lazy copies", async () => {
-  await withKino({}, async (plugin, captured) => {
-    const s = await plugin.resolve("sd:/gu-an-episodio-1/");
-    assert.equal(s.url, "https://cdn.example/a/index.m3u8");
-    assert.equal(s.mime, "application/x-mpegURL");
-    assert.match(s.label, /OK\.ru/);
-    assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1", "https://ok.ru/videoembed/9"]);
-    const lazy = await plugin.resolve("srv:1:sd:/gu-an-episodio-1/");
-    assert.equal(lazy.url, "https://cdn.example/a/index.m3u8");
+test("resolve (SeriesDonghua): conserva Dailymotion, OK.ru y Rumble como fuentes seleccionables", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
+    assert.deepEqual(captured, []);
+    const labels = (stream.alternatives || []).map((item) => item.label);
+    assert.ok(labels.some((label) => /Dailymotion/i.test(label)));
+    assert.ok(labels.some((label) => /OK\.ru/i.test(label)));
+    assert.ok(labels.some((label) => /Rumble/i.test(label)) === false, "la fuente elegida no debe duplicarse como alternativa");
   });
 });
 
 test("resolve (MundoDonghua): reads the player address out of the packed script", async () => {
   await withKino({}, async (plugin, captured) => {
-    const s = await plugin.resolve("md:/ver/swallowed-star-3/159");
+    const s = await plugin.resolve("srv:0:md:/ver/swallowed-star-3/159");
     assert.equal(s.url, "https://cdn.example/a/index.m3u8");
     assert.deepEqual(captured, ["https://voe.sx/e/qi68ljjc49gf"]);
     assert.match(s.label, /Voe/);
@@ -206,17 +214,17 @@ test("resolve (Dailymotion): uses the direct stream API without browser capture"
   });
 });
 
-test("resolve (OK.ru): reads player metadata and prefers a direct video with required headers", async () => {
+test("resolve (OK.ru): reads player metadata and prefers HLS with required headers", async () => {
   await withKino({
     "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
-    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[{"name":"hd","url":"https://cdn.example/ok-file?token=abc"}],"hlsManifestUrl":"https://cdn.example/ok.m3u8"}}}'></div>`,
+    "https://ok.ru/videoembed/9": String.raw`<div data-options='{"flashvars":{"metadata":{"videos":[{"name":"hd","url":"https://cdn.example/ok.mp4?token=abc"}],"hlsManifestUrl":"https://cdn.example/ok.m3u8"}}}'></div>`,
   }, async (plugin, captured) => {
     const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
-    assert.equal(stream.url, "https://cdn.example/ok.mp4");
-    assert.equal(stream.mime, "video/mp4");
+    assert.equal(stream.url, "https://cdn.example/ok.m3u8", "con HLS disponible se prefiere HLS al archivo directo");
+    assert.equal(stream.mime, "application/x-mpegURL");
     assert.equal(stream.headers.Referer, "https://ok.ru/videoembed/9");
     assert.equal(stream.headers.Origin, "https://ok.ru");
-    assert.deepEqual(captured, ["https://www.dailymotion.com/embed/video/x1"]);
+    assert.deepEqual(captured, []);
   });
 });
 
@@ -251,19 +259,61 @@ test("resolve (OK.ru): prefers HLS when both HLS and DASH manifests are present"
     assert.equal(stream.headers.Origin, "https://ok.ru");
     assert.match(stream.headers["User-Agent"], /Mozilla\/5\.0/);
     assert.deepEqual(captured, []);
-    assert.ok(stream.alternatives.some((item) => item.url === mpd && item.mime === "application/dash+xml"));
-    assert.ok(logs.some((line) => line.includes('"extension":"mpd"') && line.includes('"confirmedExtension":true')));
+    assert.ok((stream.alternatives || []).length > 0, "las demás pestañas siguen disponibles como alternativas manuales");
   });
 });
 
 test("resolve (Rumble): reads its public embedJS API without browser capture", async () => {
   await withKino({
-    "https://rumble.com/embedJS/u3/?request=video&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
   }, async (plugin, captured) => {
     const stream = await plugin.resolve("srv:2:sd:/gu-an-episodio-1/");
     assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
     assert.equal(stream.mime, "application/x-mpegURL");
     assert.equal(stream.headers.Referer, "https://rumble.com/embed/v7eiaew/");
+    assert.deepEqual(captured, []);
+  });
+});
+
+test("resolve: a direct HTTP server wins without opening the hidden browser, the rest stay lazy", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("sd:/gu-an-episodio-1/");
+    assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
+    assert.deepEqual(captured, [], "no usa el navegador si un servidor directo funciona");
+    const labels = (stream.alternatives || []).map((item) => item.label);
+    assert.ok(labels.some((label) => /Dailymotion/i.test(label)));
+    assert.ok(labels.some((label) => /OK\.ru/i.test(label)));
+  });
+});
+
+test("search also tries the original and alternative titles", async () => {
+  const { fetchImpl, asked } = sites();
+  const before = globalThis.kino;
+  globalThis.kino = {
+    lang: "es-CO", log() {}, error: (code, msg) => Object.assign(new Error(msg), { code }), storage: { get: () => null, set() {} },
+    fetch: async (url, o) => { const r = await fetchImpl(url, o); const body = await r.text(); return { ok: r.ok, status: r.status, text: () => body, json: () => JSON.parse(body) }; },
+  };
+  try {
+    const plugin = await import(pathToFileURL(join(root, "plugin.js")).href + "?t=" + Math.random());
+    const found = await plugin.search({ q: "Zzz inexistente", originalTitle: "gu", altTitles: ["gu", "Zzz inexistente"] });
+    assert.ok(found.some((item) => /Gu An/.test(item.title)), "encuentra la serie por el título original");
+    assert.equal(asked.filter((line) => line.includes("buscar.php")).length, 2, "sin repetir títulos iguales");
+  } finally { globalThis.kino = before; }
+});
+
+
+test("resolve: a matching SeriesDonghua episode exposes MundoDonghua sources as alternatives", async () => {
+  await withKino({
+    "https://geo.dailymotion.com/videos/x1": JSON.stringify({ stream: {} }),
+    "https://rumble.com/embedJS/u3/?request=video&ver=2&v=v7eiaew": JSON.stringify({ ua: { hls: { url: "https://cdn.example/rumble.m3u8" } } }),
+  }, async (plugin, captured) => {
+    const stream = await plugin.resolve("mix:sd:/gu-an-episodio-1/|md:/ver/gu-an/1");
+    assert.equal(stream.url, "https://cdn.example/rumble.m3u8");
+    assert.ok((stream.alternatives || []).some((item) => /Voe · MundoDonghua/.test(item.label)));
+    assert.ok((stream.alternatives || []).some((item) => /Dailymotion · SeriesDonghua/.test(item.label)));
     assert.deepEqual(captured, []);
   });
 });

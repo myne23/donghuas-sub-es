@@ -18,7 +18,8 @@ const MD = { key: "md", name: "MundoDonghua", base: "https://www.mundodonghua.co
 const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "n1mwq.org", "vidhidepro.com", "embedwish.com", "strp2p.com"];
 const MD_SERVER_NAMES = { fmoon: "Filemoon", amagi: "Voe", vhide: "VidHide", swish: "StreamWish" };
 
-const CAPTURE_MS = 20000;
+const CAPTURE_MS = 20000; // Tiempo completo cuando el usuario elige una fuente manualmente.
+const AUTO_CAPTURE_MS = 8000; // Evita que cada fuente fallida bloquee el arranque durante 20 s.
 const MAX_ATTEMPTS = 2; // servers tried inside one resolve; the others become lazy copies
 const SOFT_DEADLINE_MS = 45000; // stop starting new attempts after this (resolve has 75 s)
 
@@ -122,27 +123,41 @@ function sdCards(html) {
 // MundoDonghua: <div class="md-card"> (or "md-card limited") with an href to /donghua/slug or /ver/slug/n[/token].
 function mdCards(html) {
   const out = [];
-  const re = /<div class="md-card( limited)?">\s*<a href="([^"]+)">([\s\S]*?)<\/a>\s*<\/div>/g;
-  let m;
-  while ((m = re.exec(html))) {
-    const href = pathOf(m[2]);
-    const b = m[3];
+  const seen = new Set();
+  const addCard = (hrefRaw, body, limited = false) => {
+    const href = pathOf(hrefRaw);
     const ver = /^\/ver\/([^/]+)\/(\d+)(?:\/(.+))?$/.exec(href);
     const don = /^\/donghua\/([^/?#]+)/.exec(href);
     const slug = ver ? ver[1] : don ? don[1] : "";
-    if (!slug) continue;
-    const alt = decode(first(/<img[^>]+alt="([^"]*)"/, b)).trim();
-    const t = text(first(/<h[1-6] class="md-card-title"[^>]*>([\s\S]*?)<\/h[1-6]>/, b));
+    if (!slug) return;
+    const key = slug + ":" + (ver ? ver[2] : "series");
+    if (seen.has(key)) return;
+    seen.add(key);
+    const alt = decode(first(/<img\b[^>]*\balt=["']([^"']*)["']/i, body)).trim();
+    const heading = text(first(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]>/i, body));
+    const titleAttr = decode(first(/\btitle=["']([^"']+)["']/i, body)).trim();
+    const title = (alt || heading || titleAttr || slug.replace(/-/g, " "))
+      .replace(/\s+Episodio\s+\d+\s*$/i, "").trim();
     out.push({
       slug,
       episode: ver ? Number(ver[2]) : 0,
       epPath: ver ? href : "",
-      limited: !!m[1] && !!ver,
-      kindLabel: text(first(/class="md-card-badge[^"]*">([\s\S]*?)<\/span>/, b)),
-      title: alt || t.replace(/\s+Episodio\s+\d+\s*$/i, ""),
-      poster: abs(MD, first(/<img[^>]+src="([^"]+)"/, b)),
+      limited: !!limited && !!ver,
+      kindLabel: text(first(/class=["'][^"']*md-card-badge[^"']*["'][^>]*>([\s\S]*?)<\/span>/i, body)),
+      title,
+      poster: abs(MD, first(/<img\b[^>]*\bsrc=["']([^"']+)["']/i, body)),
     });
-  }
+  };
+
+  // Estructura habitual de las tarjetas.
+  const re = /<div class="md-card( limited)?">\s*<a href="([^"]+)">([\s\S]*?)<\/a>\s*<\/div>/g;
+  let m;
+  while ((m = re.exec(html))) addCard(m[2], m[3], !!m[1]);
+
+  // Respaldo para páginas de búsqueda cuyo HTML cambia las clases o el contenedor.
+  // Solo acepta enlaces de ficha/episodio propios de MundoDonghua.
+  const anchors = /<a\b[^>]*\bhref=["']((?:https?:\/\/www\.mundodonghua\.com)?\/(?:donghua\/[^"'?#]+|ver\/[^"'?#]+))["'][^>]*>([\s\S]*?)<\/a>/gi;
+  while ((m = anchors.exec(html))) addCard(m[1], m[2], /class=["'][^"']*limited/i.test(m[0]));
   return out;
 }
 
@@ -186,6 +201,124 @@ function unique(items) {
     out.push(it);
   }
   return out;
+}
+
+// Solo se fusionan títulos idénticos tras normalizar mayúsculas, acentos y puntuación.
+// No se intenta adivinar temporadas ni alias que puedan representar series distintas.
+function normalizeTitle(value) {
+  return decode(String(value || ""))
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\b(season|temporada|seasonal|part|parte|saison|cour)\s*[0-9ivx]*\b/g, " ")
+    .replace(/\b(s\s*\d+|\d+(st|nd|rd|th)\s+season)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function titleSimilarity(a, b) {
+  const x = normalizeTitle(a), y = normalizeTitle(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  const compactX = x.replace(/\s/g, ""), compactY = y.replace(/\s/g, "");
+  if (compactX === compactY) return 1;
+  const xt = new Set(x.split(" ").filter((w) => w.length > 1));
+  const yt = new Set(y.split(" ").filter((w) => w.length > 1));
+  if (!xt.size || !yt.size) return 0;
+  let common = 0;
+  for (const w of xt) if (yt.has(w)) common++;
+  const dice = (2 * common) / (xt.size + yt.size);
+  const containment = common / Math.min(xt.size, yt.size);
+  return Math.max(dice, containment >= 0.8 && Math.min(xt.size, yt.size) >= 2 ? 0.82 : 0);
+}
+
+async function findMatchingMdSeries(title, sdPath = "") {
+  const key = normalizeTitle(title);
+  if (!key) return null;
+  const cacheKey = "match-md-v5:" + key.replace(/\s/g, "").slice(0, 100);
+  try {
+    const cached = kino.storage.get(cacheKey);
+    if (cached === "none") return null;
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.slug && parsed.title) return parsed;
+    }
+  } catch {}
+  const slugTitle = String(sdPath || "").split("/").filter(Boolean).pop().replace(/-/g, " ");
+
+  // Primera opción: comprobar la ficha de MundoDonghua usando el mismo slug.
+  // Evita depender del buscador del sitio cuando ambas páginas comparten la URL canónica.
+  const directSlug = String(sdPath || "").split("/").filter(Boolean).pop() || "";
+  if (directSlug) {
+    try {
+      const directPath = "/donghua/" + directSlug;
+      const directHtml = await getPage(MD, directPath);
+      const directTitle = text(first(/<h1 class="md-detail-title"[^>]*>([\s\S]*?)<\/h1>/, directHtml))
+        || text(first(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i, directHtml));
+      const directScore = titleSimilarity(title, directTitle);
+      if (directTitle && (normalizeTitle(title) === normalizeTitle(directTitle) || directScore >= 0.78)) {
+        const result = { slug: directSlug, title: directTitle };
+        try { kino.storage.set(cacheKey, JSON.stringify(result), { ttlMs: 24 * 3600 * 1000 }); } catch {}
+        log("fusión de fuentes: coincidencia por slug " + title + " ↔ " + directTitle);
+        return result;
+      }
+    } catch {}
+  }
+
+  // Títulos alternativos conocidos. MundoDonghua usa "Please Spare, My Life" para
+  // Spare Me, Great Lord!, y cada temporada tiene una ficha separada.
+  const titleAliases = {
+    "spare me great lord": ["Please Spare, My Life", "Please Spare, My Life 2", "Please Spare, My Life 3"],
+    "spare me great lord!": ["Please Spare, My Life", "Please Spare, My Life 2", "Please Spare, My Life 3"],
+    "please spare my life": ["Spare Me, Great Lord", "Spare Me, Great Lord!", "Please Spare, My Life 2", "Please Spare, My Life 3"],
+    "please spare my life 2": ["Spare Me, Great Lord 2", "Spare Me, Great Lord!", "Please Spare, My Life"],
+    "please spare my life 3": ["Spare Me, Great Lord 3", "Spare Me, Great Lord!", "Please Spare, My Life"],
+  };
+  const aliasKey = normalizeTitle(title).replace(/\s+(?:[23])$/, "");
+  const aliasTerms = titleAliases[normalizeTitle(title)] || titleAliases[aliasKey] || [];
+  const terms = [...new Set([title, slugTitle, title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim(), ...aliasTerms])].filter(Boolean);
+  const cardsBySlug = new Map();
+  try {
+    for (const term of terms) {
+      // La búsqueda actual de MundoDonghua usa /busquedas/TITULO; mantenemos el
+      // endpoint antiguo como respaldo por si el sitio cambia de ruta.
+      const urls = [
+        MD.base + "/busquedas/" + encodeURIComponent(term),
+        MD.base + "/busquedas?donghua=" + encodeURIComponent(term),
+      ];
+      for (const url of urls) {
+        try {
+          const html = await getPage(MD, url);
+          for (const c of mdCards(html)) if (!c.episode && c.slug) cardsBySlug.set(c.slug, c);
+          if (cardsBySlug.size) break;
+        } catch {}
+      }
+    }
+    const cards = Array.from(cardsBySlug.values());
+    const matchTitles = [title, slugTitle, ...aliasTerms];
+    const normalizedAliases = new Set(matchTitles.map(normalizeTitle).filter(Boolean));
+    const exact = cards.find((c) =>
+      normalizedAliases.has(normalizeTitle(c.title)) ||
+      normalizedAliases.has(normalizeTitle(c.slug.replace(/-/g, " ")))
+    );
+    const ranked = cards.map((c) => ({
+      c,
+      score: Math.max(...matchTitles.map((candidate) => titleSimilarity(candidate, c.title))),
+    })).sort((a, b) => b.score - a.score);
+    const match = exact || (ranked[0] && ranked[0].score >= 0.78 ? ranked[0].c : null);
+    if (!match) {
+      try { kino.storage.set(cacheKey, "none", { ttlMs: 2 * 3600 * 1000 }); } catch {}
+      log("fusión de fuentes: sin coincidencia suficientemente cercana para " + title + (cards.length ? " (mejor similitud " + ranked[0].score.toFixed(2) + ")" : " (sin candidatos de MundoDonghua)"));
+      return null;
+    }
+    const result = { slug: match.slug, title: match.title };
+    try { kino.storage.set(cacheKey, JSON.stringify(result), { ttlMs: 24 * 3600 * 1000 }); } catch {}
+    log("fusión de fuentes: coincidencia " + title + " ↔ " + match.title + " (similitud " + (exact ? "exacta" : ranked.find((x) => x.c.slug === match.slug).score.toFixed(2)) + ")");
+    return result;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- pagination ----------
@@ -320,18 +453,31 @@ export async function browse(ref, cursor) {
 export async function search(query) {
   await null;
   const q = String((query && query.q) || "").trim();
-  if (!q) return [];
-  const [a, b] = await Promise.all([
-    safe("buscar-sd", async () => unique(sdCards(await getPage(SD, "/buscar.php?s=" + encodeURIComponent(q))).filter((c) => !c.episode).map(sdItem))),
-    safe("buscar-md", async () => unique(mdCards(await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(q))).filter((c) => !c.episode).map(mdItem))),
-  ]);
+  // Los sitios solo conocen algunos títulos: probamos también el título original y los alternativos (máx. 3 en total).
+  const terms = [];
+  const seenTerms = new Set();
+  for (const raw of [q, query && query.originalTitle].concat((query && Array.isArray(query.altTitles)) ? query.altTitles : [])) {
+    const t = String(raw || "").trim().slice(0, 120);
+    const key = t.toLowerCase();
+    if (t && !seenTerms.has(key) && terms.length < 3) { seenTerms.add(key); terms.push(t); }
+  }
+  if (!terms.length) return [];
+  const runs = await Promise.all(terms.map((term) => Promise.all([
+    safe("buscar-sd", async () => unique(sdCards(await getPage(SD, "/buscar.php?s=" + encodeURIComponent(term))).filter((c) => !c.episode).map(sdItem))),
+    safe("buscar-md", async () => unique(mdCards(await getPage(MD, "/busquedas?donghua=" + encodeURIComponent(term))).filter((c) => !c.episode).map(mdItem))),
+  ])));
+  const a = unique(runs.flatMap((r) => r[0] || []));
+  const b = unique(runs.flatMap((r) => r[1] || []));
+  // SeriesDonghua es el catálogo principal: si el título coincide exactamente (normalizado),
+  // se conserva su ficha y se oculta la duplicada de MundoDonghua. Títulos distintos siguen separados.
+  const secondary = b.filter((item) => !a.some((primary) => titleSimilarity(primary.title, item.title) >= 0.78));
   // Global search may not make item badges prominent in every Kino layout, so make the source
   // unmistakable in the result title too. Keep the canonical title inside episodes() metadata.
   const markSource = (items, source) => (items || []).map((item) => ({
     ...item,
     title: "[" + source + "] " + item.title,
   }));
-  return markSource(a, SD.name).concat(markSource(b, MD.name)).slice(0, 100);
+  return markSource(a, SD.name).concat(markSource(secondary, MD.name)).slice(0, 100);
 }
 
 // ---------- episodes ----------
@@ -348,7 +494,7 @@ export async function episodes(ref) {
   return r.site === SD ? sdEpisodes(r.path) : mdEpisodes(r.path);
 }
 
-async function sdEpisodes(path) {
+async function sdEpisodes(path, skipFusion = false) {
   const html = await getPage(SD, path);
   const list = [];
   const seen = new Set();
@@ -364,12 +510,33 @@ async function sdEpisodes(path) {
     list.push({ number: n, ref: "sd:" + pathOf(m[2]), airDate: ymd(first(/fa-calendar-alt"><\/i>\s*([\d-]+)/, m[3])) });
   }
   list.sort((a, b) => a.number - b.number);
+  const seriesTitle = text(first(/<h1 class="hero-title"[^>]*>([\s\S]*?)<\/h1>/, html)) || "";
+  // Si existe la misma serie en MundoDonghua, emparejamos solo episodios con el mismo número.
+  // La ficha y los metadatos siguen siendo los de SeriesDonghua; el ref mixto añade las fuentes secundarias.
+  if (!skipFusion && seriesTitle && list.length) {
+    const match = await findMatchingMdSeries(seriesTitle, path);
+    if (match) {
+      try {
+        const mdList = (await mdEpisodes("/donghua/" + match.slug, true)).episodes;
+        const mdByNumber = new Map(mdList.map((ep) => [Number(ep.number), ep.ref]));
+        for (const ep of list) {
+          const mdRef = mdByNumber.get(Number(ep.number));
+          if (mdRef && String(ep.ref).startsWith("sd:")) {
+            ep.ref = "mix:" + ep.ref + "|" + mdRef;
+          }
+        }
+        log("fusión de fuentes: " + seriesTitle + " · " + list.filter((ep) => String(ep.ref).startsWith("mix:")).length + " episodios coincidentes de MundoDonghua");
+      } catch {
+        // La lista principal de episodios no depende de que la secundaria responda.
+      }
+    }
+  }
   const genres = [];
   const gre = /class="genre-pill">\s*([^<]+?)\s*<\/a>/g;
   while ((m = gre.exec(html))) genres.push(decode(m[1]).slice(0, 30));
   return {
     series: {
-      title: text(first(/<h1 class="hero-title"[^>]*>([\s\S]*?)<\/h1>/, html)) || undefined,
+      title: seriesTitle || undefined,
       poster: abs(SD, first(/class="hero-poster"[^>]*src="([^"]+)"/, html) || first(/<img src="([^"]+)" alt="[^"]*" class="hero-poster"/, html)),
       backdrop: abs(SD, first(/<meta property="og:image" content="([^"]+)"/, html)),
       overview: text(first(/Sinopsis\s*<\/h2>\s*<div[^>]*>\s*<p>([\s\S]*?)<\/p>/, html)).slice(0, 1000) || undefined,
@@ -379,7 +546,55 @@ async function sdEpisodes(path) {
   };
 }
 
-async function mdEpisodes(path) {
+async function findMatchingSdSeries(title, mdPath = "") {
+  const key = normalizeTitle(title);
+  if (!key) return null;
+  const cacheKey = "match-sd-v1:" + key.replace(/\s/g, "").slice(0, 100);
+  try {
+    const cached = kino.storage.get(cacheKey);
+    if (cached === "none") return null;
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.path && parsed.title) return parsed;
+    }
+  } catch {}
+  const slug = String(mdPath || "").split("/").filter(Boolean).pop() || "";
+  if (slug) {
+    try {
+      const directPath = "/" + slug + "/";
+      const html = await getPage(SD, directPath);
+      const directTitle = text(first(/<h1 class="hero-title"[^>]*>([\s\S]*?)<\/h1>/, html));
+      const score = titleSimilarity(title, directTitle);
+      if (directTitle && (normalizeTitle(title) === normalizeTitle(directTitle) || score >= 0.78)) {
+        const result = { path: directPath, title: directTitle };
+        try { kino.storage.set(cacheKey, JSON.stringify(result), { ttlMs: 24 * 3600 * 1000 }); } catch {}
+        log("fusión de fuentes: coincidencia inversa por slug " + title + " ↔ " + directTitle);
+        return result;
+      }
+    } catch {}
+  }
+  try {
+    const html = await getPage(SD, "/buscar.php?s=" + encodeURIComponent(title));
+    const cards = sdCards(html).filter((c) => !c.episode && c.path);
+    const exact = cards.find((c) => normalizeTitle(c.title) === normalizeTitle(title));
+    const ranked = cards.map((c) => ({ c, score: titleSimilarity(title, c.title) }))
+      .sort((a, b) => b.score - a.score);
+    const match = exact || (ranked[0] && ranked[0].score >= 0.78 ? ranked[0].c : null);
+    if (!match) {
+      try { kino.storage.set(cacheKey, "none", { ttlMs: 2 * 3600 * 1000 }); } catch {}
+      log("fusión de fuentes: sin coincidencia inversa en SeriesDonghua para " + title);
+      return null;
+    }
+    const result = { path: match.path, title: match.title };
+    try { kino.storage.set(cacheKey, JSON.stringify(result), { ttlMs: 24 * 3600 * 1000 }); } catch {}
+    log("fusión de fuentes: coincidencia inversa " + title + " ↔ " + match.title);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+async function mdEpisodes(path, skipFusion = false) {
   const html = await getPage(MD, path);
   const slug = (/^\/donghua\/([^/?#]+)/.exec(path) || [])[1] || "";
   const byNumber = new Map();
@@ -396,6 +611,26 @@ async function mdEpisodes(path) {
     if (n && !byNumber.has(n)) byNumber.set(n, { number: n, ref: "md:" + lim[k] });
   }
   const list = Array.from(byNumber.values()).sort((a, b) => a.number - b.number);
+  // Inversa: al abrir desde el catálogo de MundoDonghua, añadir SeriesDonghua como fuentes auxiliares.
+  const seriesTitle = text(first(/<h1 class="md-detail-title"[^>]*>([\s\S]*?)<\/h1>/, html)) || "";
+  if (!skipFusion && seriesTitle && list.length) {
+    const match = await findMatchingSdSeries(seriesTitle, path);
+    if (match) {
+      try {
+        const sdList = (await sdEpisodes(match.path, true)).episodes;
+        const sdByNumber = new Map(sdList.map((ep) => [Number(ep.number), ep.ref]));
+        for (const ep of list) {
+          const sdRef = sdByNumber.get(Number(ep.number));
+          if (sdRef && String(ep.ref).startsWith("md:")) {
+            ep.ref = "mix:" + ep.ref + "|" + sdRef;
+          }
+        }
+        log("fusión inversa de fuentes: " + seriesTitle + " · " + list.filter((ep) => String(ep.ref).startsWith("mix:")).length + " episodios coincidentes de SeriesDonghua");
+      } catch {
+        // El catálogo y los episodios de MundoDonghua siguen disponibles si la fuente auxiliar falla.
+      }
+    }
+  }
   const genres = [];
   const gre = /class="md-genre-tag">([^<]+)</g;
   while ((m = gre.exec(html))) genres.push(decode(m[1]).trim().slice(0, 30));
@@ -443,23 +678,36 @@ function unpackAll(html) {
 
 // MundoDonghua: the page hides each player's address inside packed scripts; tabs name the servers.
 async function mdServers(path) {
-  const html = await getPage(MD, path);
-  const embeds = {};
-  for (const code of unpackAll(html)) {
-    const re = /\$\("#(\w+)_play"\)\.append\("<iframe src='([^']+)'/g;
-    let m;
-    while ((m = re.exec(code))) embeds[m[1]] = decode(m[2]);
+  // Las copias diferidas "srv:<n>:<episodio>" vuelven a pedir los servidores: guardamos las direcciones 10 min
+  // para no bajar y desempaquetar de nuevo la misma página.
+  const cacheKey = "md-embeds:" + path;
+  let list = null;
+  try {
+    const raw = kino.storage.get(cacheKey);
+    if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.length) list = parsed; }
+  } catch {}
+  if (!list) {
+    const html = await getPage(MD, path);
+    const embeds = {};
+    for (const code of unpackAll(html)) {
+      const re = /\$\("#(\w+)_play"\)\.append\("<iframe src='([^']+)'/g;
+      let m;
+      while ((m = re.exec(code))) embeds[m[1]] = decode(m[2]);
+    }
+    list = [];
+    const tabs = /id="(\w+)_tab"/g;
+    let t;
+    while ((t = tabs.exec(html))) {
+      const id = t[1];
+      if (embeds[id]) list.push({ id, url: embeds[id] });
+    }
+    // A page whose tabs we could not read: still offer what the scripts held.
+    if (!list.length) for (const id of Object.keys(embeds)) list.push({ id, url: embeds[id] });
+    if (list.length) {
+      try { kino.storage.set(cacheKey, JSON.stringify(list), { ttlMs: 10 * 60 * 1000 }); } catch {}
+    }
   }
-  const servers = [];
-  const tabs = /id="(\w+)_tab"/g;
-  let t;
-  while ((t = tabs.exec(html))) {
-    const id = t[1];
-    if (embeds[id]) servers.push({ name: MD_SERVER_NAMES[id] || id, embed: async () => embeds[id] });
-  }
-  // A page whose tabs we could not read: still offer what the scripts held.
-  if (!servers.length) for (const id of Object.keys(embeds)) servers.push({ name: MD_SERVER_NAMES[id] || id, embed: async () => embeds[id] });
-  return servers;
+  return list.map((entry) => ({ name: MD_SERVER_NAMES[entry.id] || entry.id, embed: async () => entry.url }));
 }
 
 // SeriesDonghua: the server tabs carry a video id and an index; the player address comes from an API call.
@@ -1185,7 +1433,42 @@ async function resolveManual(embed, site, label) {
       const data = r.json();
       const streamUrl = data && data.stream && data.stream.url;
       if (streamUrl) {
-        log("servidor " + label + ": URL de Dailymotion resuelta directamente");
+        let sourceInfo = "URL HLS resuelta";
+        try {
+          const streamUri = new URL(streamUrl);
+          sourceInfo += "; id=" + id + "; host=" + streamUri.hostname + "; ruta=" + streamUri.pathname.slice(-70);
+        } catch {}
+        // Diagnóstico temporal: consultar el manifiesto maestro para saber si este Dailymotion
+        // ofrece una calidad fija o varias variantes. No se modifica la URL de reproducción.
+        try {
+          const manifest = await kino.fetch(streamUrl, {
+            headers: { "User-Agent": headers["User-Agent"], Referer: "https://geo.dailymotion.com/" },
+            timeoutMs: 1800
+          });
+          if (manifest.ok) {
+            const body = manifest.text().replace(/\r/g, "");
+            const lines = body.split("\n");
+            const variants = [];
+            for (let i = 0; i < lines.length; i++) {
+              if (!/^#EXT-X-STREAM-INF:/i.test(lines[i].trim())) continue;
+              const attrs = lines[i];
+              const res = /RESOLUTION=(\d+x\d+)/i.exec(attrs);
+              const bw = /(?:AVERAGE-BANDWIDTH|BANDWIDTH)=(\d+)/i.exec(attrs);
+              const uri = (lines.slice(i + 1).find((line) => line.trim() && !line.trim().startsWith("#")) || "").trim();
+              variants.push((res ? res[1] : "resolución desconocida") +
+                (bw ? "@" + Math.round(Number(bw[1]) / 1000) + "kbps" : "") +
+                (uri ? " -> " + uri.split("?")[0].slice(-55) : ""));
+            }
+            sourceInfo += variants.length
+              ? "; variantes HLS=" + JSON.stringify(variants.slice(0, 12))
+              : (/#EXTINF:/i.test(body) ? "; playlist multimedia sin variantes (posible calidad fija)" : "; manifiesto sin variantes reconocibles");
+          } else {
+            sourceInfo += "; inspección HLS HTTP " + manifest.status;
+          }
+        } catch (e) {
+          sourceInfo += "; inspección HLS no disponible (" + String(e && e.message || e).slice(0, 70) + ")";
+        }
+        log("servidor " + label + " · " + site.name + ": Dailymotion " + sourceInfo);
         return directStream(streamUrl, label + " · " + site.name, "https://geo.dailymotion.com/", "application/x-mpegURL");
       }
       return null;
@@ -1421,9 +1704,10 @@ async function resolveManual(embed, site, label) {
 // Opens one player in the hidden browser and returns the video it requested, or null.
 async function capture(site, server, options) {
   const allowBrowserOnPow = !!(options && options.allowBrowserOnPow);
+  const prepared = options && options.prepared;
   let embed = "";
   try {
-    embed = await server.embed();
+    embed = prepared && typeof prepared.embed === "string" ? prepared.embed : await server.embed();
   } catch (e) {
     log("servidor " + server.name + ": no dio la dirección del reproductor");
     return null;
@@ -1441,7 +1725,10 @@ async function capture(site, server, options) {
     log("servidor " + server.name + ": reproductor no admitido (" + where + ")");
     return null;
   }
-  const manual = await resolveManual(embed, site, server.name);
+  // Prueba temporal: StreamWish y Filemoon/Bysekoze usan captura del navegador oculto.
+  // VidHide y el resto de servidores conservan su resolución directa actual.
+  const forceBrowser = !!(prepared && prepared.forceBrowser);
+  const manual = forceBrowser ? null : (prepared && prepared.manualDone ? prepared.manual : await resolveManual(embed, site, server.name));
   if (manual) {
     if (manual.skipBrowser) {
       if (!allowBrowserOnPow) {
@@ -1464,7 +1751,7 @@ async function capture(site, server, options) {
   } catch {}
   let res;
   try {
-    res = await kino.browser.capture(embed, { timeoutMs: CAPTURE_MS, headers: { Referer: site.base + "/" } });
+    res = await kino.browser.capture(embed, { timeoutMs: options && options.manual ? CAPTURE_MS : AUTO_CAPTURE_MS, headers: { Referer: site.base + "/" } });
   } catch (e) {
     log("servidor " + server.name + ": " + ((e && e.code) || "error") + " al abrir el reproductor");
     return null;
@@ -1482,78 +1769,291 @@ async function capture(site, server, options) {
   return stream;
 }
 
-export async function resolve(ref) {
+async function resolveInner(ref) {
   await null;
   const lazy = /^srv:(\d+):((?:sd|md):\/.*)$/.exec(String(ref));
-  const epRef = lazy ? lazy[2] : String(ref);
+  const mixedMatch = !lazy ? /^mix:((?:sd|md):\/[^|]+)\|((?:sd|md):\/.*)$/.exec(String(ref)) : null;
+  // Prioridad global: si el episodio mixto incluye SeriesDonghua, resolver ese origen primero,
+  // incluso cuando la ficha y el ref original pertenecen a MundoDonghua. No cambia el menú
+  // de episodios ni elimina fuentes; solo normaliza el orden interno de resolución.
+  const mixed = mixedMatch &&
+    splitRef(mixedMatch[1])?.site === MD &&
+    splitRef(mixedMatch[2])?.site === SD
+      ? [mixedMatch[0], mixedMatch[2], mixedMatch[1]]
+      : mixedMatch;
+  const epRef = lazy ? lazy[2] : mixed ? mixed[1] : String(ref);
+  const mixedMdRef = mixed ? mixed[2] : "";
   const r = splitRef(epRef);
   if (!r) throw kino.error("not_found", "ref desconocido");
   const started = Date.now();
-  const servers = r.site === SD ? await sdServers(r.path) : await mdServers(r.path);
-  if (!servers.length) throw kino.error("not_found", "el episodio no tiene servidores");
+  let servers;
+  try {
+    servers = r.site === SD ? await sdServers(r.path) : await mdServers(r.path);
+  } catch (e) {
+    if (mixedMdRef) {
+      try { return await resolveInner(mixedMdRef); } catch {}
+    }
+    throw e;
+  }
+  if (!servers.length) {
+    if (mixedMdRef) return resolveInner(mixedMdRef);
+    throw kino.error("not_found", "el episodio no tiene servidores");
+  }
 
+  // No filtrar pestañas del sitio: todas las fuentes deben seguir disponibles para elegirlas manualmente.
+  const allIndexes = servers.map((_, index) => index);
   if (lazy) {
-    const server = servers[Number(lazy[1])];
-    // Al elegir una fuente manualmente, permitir el fallback de navegador incluso si su PoW falló.
-    const s = server ? await capture(r.site, server, { allowBrowserOnPow: true }) : null;
+    const index = Number(lazy[1]);
+    // Compatibilidad con cualquier fuente elegida manualmente, incluidas las que fallaron automáticamente.
+    const server = servers[index];
+    // Odysee solo se intenta cuando el usuario la elige: forzar navegador oculto y saltar el resolver HTTP.
+    const selectedOdysee = !!server && r.site === SD && /odysee/i.test(String(server.name || ""));
+    const s = server ? await capture(r.site, server, {
+      manual: true,
+      allowBrowserOnPow: true,
+      ...(selectedOdysee ? { prepared: { forceBrowser: true } } : {})
+    }) : null;
     if (!s) throw failure();
     return s;
   }
 
   let stream = null;
+  let selectedServerIndex = -1;
   let tried = 0;
   const left = [];
-  // En MundoDonghua probar las cuatro fuentes en el orden solicitado; en SeriesDonghua mantener el límite original.
+  // Se conserva el flujo de resolución existente; solo cambia la prioridad de las fuentes.
   const maxAttempts = r.site === MD ? 4 : MAX_ATTEMPTS;
-  // Try fast, direct HTTP resolvers before Filemoon/Bysekoze, whose challenge flow
-  // can consume ~15-20 seconds before the player even opens. Keep original indexes
-  // so each lazy alternative still points to the correct server.
+  // Los resolvers HTTP directos siguen ejecutándose primero en paralelo. Si ninguno funciona,
+  // se usa el navegador de forma secuencial según esta prioridad. Todas las fuentes restantes
+  // permanecen como alternativas manuales aunque fallen durante el intento automático.
   const priority = (name) => {
     const n = String(name || "").toLowerCase();
-    // En MundoDonghua, VOE primero; luego VidHide, Filemoon/SP2P y StreamWish.
     if (r.site === MD) {
-      if (/voe|amagi/.test(n)) return 0;
-      if (/vidhide|vhide/.test(n)) return 1;
-      if (/filemoon|bysekoze|fmoon|sp2p/.test(n)) return 2;
+      if (/filemoon|bysekoze|fmoon/.test(n)) return 0;
+      if (/voe|amagi/.test(n)) return 1;
+      if (/vidhide|vhide/.test(n)) return 2;
       if (/streamwish|swish/.test(n)) return 3;
+      if (/sp2p|strp2p/.test(n)) return 4;
+    } else {
+      if (/dailymotion/.test(n)) return 0;
+      if (/rumble/.test(n)) return 1;
+      if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
     }
-    // Orden general para SeriesDonghua y otras fuentes.
     if (/dailymotion/.test(n)) return 0;
     if (/rumble/.test(n)) return 1;
     if (/ok\.?ru|odnoklassniki/.test(n)) return 2;
     if (/streamwish|swish/.test(n)) return 3;
     if (/vidhide|vhide/.test(n)) return 4;
     if (/filemoon|bysekoze|fmoon/.test(n)) return 5;
-    if (/voe|amagi/.test(n)) return 9;
-    return 6;
+    if (/voe|amagi/.test(n)) return 6;
+    if (/sp2p|strp2p/.test(n)) return 7;
+    return 8;
   };
-  const attemptOrder = servers.map((server, index) => ({ index, priority: priority(server.name) }))
-    .sort((a, b) => a.priority - b.priority || a.index - b.index)
+  const isStreamWish = (name) => /streamwish|swish/i.test(String(name || ""));
+  const isFilemoon = (name) => /filemoon|bysekoze|fmoon/i.test(String(name || ""));
+  const isBrowserTestServer = (name) => isStreamWish(name) || isFilemoon(name);
+  // Odysee no se prueba automáticamente: queda disponible como alternativa manual en SeriesDonghua.
+  const automaticIndexes = allIndexes.filter((index) => !(r.site === SD && /odysee/i.test(String(servers[index].name || ""))));
+  const attemptOrder = automaticIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
+    .sort((a, b) => {
+      // En esta prueba, probar primero StreamWish y Filemoon/Bysekoze con navegador oculto en ambos sitios.
+      const aTarget = isBrowserTestServer(servers[a.index].name);
+      const bTarget = isBrowserTestServer(servers[b.index].name);
+      if (aTarget !== bTarget) return aTarget ? -1 : 1;
+      if (aTarget && bTarget && isStreamWish(servers[a.index].name) !== isStreamWish(servers[b.index].name)) {
+        return isStreamWish(servers[a.index].name) ? -1 : 1;
+      }
+      return a.priority - b.priority || a.index - b.index;
+    })
     .map((item) => item.index);
+  const browserTestIndexes = attemptOrder.filter((index) => isBrowserTestServer(servers[index].name));
+  const hasBrowserTestServers = browserTestIndexes.length > 0;
+  // En la fusión inversa (catálogo MundoDonghua + respaldo SeriesDonghua), no bloquear
+  // la apertura automática probando capturas lentas de Filemoon/StreamWish/Voe. Se dejan
+  // en la lista de alternativas para que el usuario pueda probarlas manualmente.
+  const skipSlowBrowserAuto = !!mixedMdRef && r.site === MD;
+  // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
+  // que no necesitan prueba de trabajo (Byse/Filemoon va aparte, porque puede tardar 15-20 s). El navegador oculto
+  // nunca corre en paralelo: sigue en la fase 2, uno por uno.
+  const prepared = new Map();
+  const isPow = (embed) => { try { const h = new URL(embed).hostname.toLowerCase(); return /(^|\.)(bysekoze\.com|n1mwq\.org)$/.test(h); } catch { return false; } };
+  const phase1 = await Promise.all(servers.map(async (server, index) => {
+    let embed = "";
+    try { embed = await server.embed(); } catch { embed = ""; }
+    if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
+    if (isBrowserTestServer(server.name)) {
+      // No resolver HTTP directo para StreamWish/Filemoon durante esta prueba: medir la captura oculta.
+      // Esto también evita esperar al PoW de Bysekoze antes de medir el navegador.
+      prepared.set(index, { embed, manual: null, manualDone: true, forceBrowser: true });
+      return null;
+    }
+    if (isPow(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
+    let manual = null;
+    try { manual = await resolveManual(embed, r.site, server.name); } catch { manual = null; }
+    prepared.set(index, { embed, manual, manualDone: true });
+    return manual && !manual.skipBrowser ? { index, stream: manual } : null;
+  }));
+  const fast = phase1.filter(Boolean).sort((a, b) => priority(servers[a.index].name) - priority(servers[b.index].name) || a.index - b.index);
+  // Si un resolver directo ya encontró un video válido, usarlo inmediatamente.
+  // Las fuentes que requieren captura lenta siguen disponibles como alternativas manuales;
+  // no deben bloquear el inicio durante 20 s por servidor.
+  if (fast.length) {
+    stream = fast[0].stream;
+    selectedServerIndex = fast[0].index;
+    for (const i of allIndexes) if (i !== fast[0].index) left.push(i);
+  }
   for (const i of attemptOrder) {
-    if (stream || tried >= maxAttempts || Date.now() - started > SOFT_DEADLINE_MS) {
+    if (skipSlowBrowserAuto) {
+      // La fusión inversa prioriza cualquier URL directa ya resuelta; las demás fuentes
+      // de MundoDonghua se ofrecen como alternativas manuales sin consumir tiempo de arranque.
+      left.push(i);
+      continue;
+    }
+    if (stream || Date.now() - started > SOFT_DEADLINE_MS) {
+      left.push(i);
+      continue;
+    }
+    // Primero medir los servidores elegidos con navegador. Si fallan, conservar el resolver directo
+    // que ya encontró otra fuente como fallback antes de probar servidores adicionales.
+    if (fast.length && hasBrowserTestServers && tried >= browserTestIndexes.length) {
+      stream = fast[0].stream;
+      for (const remaining of allIndexes) {
+        if (remaining !== fast[0].index && !left.includes(remaining)) left.push(remaining);
+      }
+      break;
+    }
+    if (tried >= maxAttempts) {
       left.push(i);
       continue;
     }
     tried++;
-    const s = await capture(r.site, servers[i]);
+    const s = await capture(r.site, servers[i], { prepared: prepared.get(i) });
     if (s) {
       stream = s;
+      selectedServerIndex = i;
     } else {
       // No perder una fuente fallida: puede funcionar si el usuario la elige manualmente.
       left.push(i);
     }
   }
+  if (!stream && mixedMdRef) {
+    // Si ninguna fuente principal resolvió, intentamos la copia de MundoDonghua como respaldo.
+    try {
+      const fallback = await resolveInner(mixedMdRef);
+      const sdAlternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+      fallback.alternatives = (fallback.alternatives || []).concat(sdAlternatives).slice(0, 8);
+      return fallback;
+    } catch {}
+  }
   if (!stream) throw failure();
+  // Las fuentes omitidas del intento automático (Odysee) siguen apareciendo como alternativas manuales.
+  for (const i of allIndexes) {
+    if (!automaticIndexes.includes(i) && !left.includes(i)) left.push(i);
+  }
   // Mantener las alternativas en el orden de prioridad definido, incluso si alguna falló en el intento automático.
   left.sort((a, b) => priority(servers[a].name) - priority(servers[b].name) || a - b);
-  const alternatives = left.slice(0, 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+
+  // Evitar mostrar dos entradas que llevan al mismo video de Dailymotion.
+  // Los embeds de las fuentes principales ya se obtuvieron en la fase 1, así que no añadimos
+  // peticiones de red para deduplicarlas.
+  const seenDailymotionIds = new Set();
+  const selectedPrepared = selectedServerIndex >= 0 ? prepared.get(selectedServerIndex) : null;
+  const selectedDailymotionId = dailymotionVideoId(selectedPrepared && selectedPrepared.embed);
+  if (selectedDailymotionId) seenDailymotionIds.add(selectedDailymotionId);
+  const uniqueLeft = [];
+  for (const i of left) {
+    const info = prepared.get(i);
+    const videoId = dailymotionVideoId(info && info.embed);
+    if (videoId && seenDailymotionIds.has(videoId)) {
+      log("fusión de fuentes: oculto Dailymotion duplicado " + videoId + " (" + servers[i].name + " · " + r.site.name + ")");
+      continue;
+    }
+    if (videoId) seenDailymotionIds.add(videoId);
+    uniqueLeft.push(i);
+  }
+  const sdAlternatives = uniqueLeft.slice(0, mixedMdRef ? 4 : 8).map((i) => ({ label: (servers[i].name + " · " + r.site.name).slice(0, 48), ref: "srv:" + i + ":" + epRef }));
+  let alternatives = sdAlternatives;
+  if (mixedMdRef) {
+    const secondaryRef = splitRef(mixedMdRef);
+    if (secondaryRef) {
+      try {
+        const secondaryServers = secondaryRef.site === SD
+          ? await sdServers(secondaryRef.path)
+          : await mdServers(secondaryRef.path);
+        // Reservar espacio para ambos sitios: si llenamos primero con 8 fuentes primarias,
+        // las fuentes secundarias (incluido Filemoon de MundoDonghua) nunca llegan al menú.
+        const primaryAlternatives = uniqueLeft.slice(0, 4).map((i) => ({
+          label: (servers[i].name + " · " + r.site.name).slice(0, 48),
+          ref: "srv:" + i + ":" + epRef
+        }));
+        const secondaryAlternatives = [];
+        for (let index = 0; index < secondaryServers.length; index++) {
+          const server = secondaryServers[index];
+          let duplicateDailymotion = false;
+          if (/dailymotion/i.test(String(server.name || ""))) {
+            try {
+              const embed = await server.embed();
+              const videoId = dailymotionVideoId(embed);
+              if (videoId && seenDailymotionIds.has(videoId)) {
+                duplicateDailymotion = true;
+                log("fusión de fuentes: oculto Dailymotion duplicado " + videoId + " (" + server.name + " · " + secondaryRef.site.name + ")");
+              } else if (videoId) {
+                seenDailymotionIds.add(videoId);
+              }
+            } catch {}
+          }
+          if (!duplicateDailymotion) secondaryAlternatives.push({
+            label: (server.name + " · " + secondaryRef.site.name).slice(0, 48),
+            ref: "srv:" + index + ":" + mixedMdRef
+          });
+        }
+        alternatives = primaryAlternatives.concat(secondaryAlternatives.slice(0, 8 - primaryAlternatives.length));
+      } catch {
+        log("fusión de fuentes: no pude cargar los servidores auxiliares de " + secondaryRef.site.name);
+      }
+    }
+  }
+  alternatives = alternatives.filter((item, index, all) => all.findIndex((other) => other.ref === item.ref) === index).slice(0, 8);
   if (alternatives.length) stream.alternatives = alternatives;
   return stream;
 }
 
+function dailymotionVideoId(embed) {
+  try {
+    const u = new URL(String(embed || ""));
+    if (!/(^|\.)dailymotion\.com$/i.test(u.hostname)) return "";
+    return String(u.searchParams.get("video") || (u.pathname.match(/\/video\/([A-Za-z0-9]+)/i) || [])[1] || "").trim();
+  } catch {
+    return "";
+  }
+}
 function failure() {
   return kino.error("unavailable", "ningún servidor dio video", {
     userMessage: say("No se pudo abrir ningún servidor de este episodio. Prueba otro servidor o inténtalo más tarde.", "No server of this episode could be opened. Try another server or try again later."),
   });
+}
+
+// Si la URL firmada trae su propio vencimiento (expires/exp/e en segundos epoch), se lo avisamos a Kino
+// para que renueve la fuente en vez de cortarse a mitad del episodio.
+function expiryFromUrl(url) {
+  try {
+    const u = new URL(String(url));
+    for (const key of ["expires", "expiry", "exp", "e", "Expires"]) {
+      const raw = u.searchParams.get(key);
+      if (raw && /^\d{10}$/.test(raw)) {
+        const left = Number(raw) - Math.floor(Date.now() / 1000);
+        if (left > 30) return Math.min(left, 86400);
+      }
+    }
+  } catch {}
+  return 0;
+}
+
+export async function resolve(ref) {
+  const stream = await resolveInner(ref);
+  if (stream && typeof stream === "object" && stream.expiresInSeconds == null) {
+    const left = expiryFromUrl(stream.url);
+    if (left) stream.expiresInSeconds = left;
+  }
+  return stream;
 }
