@@ -1878,12 +1878,12 @@ async function resolveInner(ref) {
   const browserTestIndexes = attemptOrder.filter((index) => isBrowserTestServer(servers[index].name));
   const hasBrowserTestServers = browserTestIndexes.length > 0;
   // En la fusión inversa (catálogo MundoDonghua + respaldo SeriesDonghua), no bloquear
-  // la apertura automática probando capturas lentas de Filemoon/StreamWish/Voe. Se dejan
+  // la apertura automática probando capturas lentas de StreamWish/Voe. Se dejan
   // en la lista de alternativas para que el usuario pueda probarlas manualmente.
   const skipSlowBrowserAuto = !!mixedMdRef && r.site === MD;
   // Fase 1 (solo HTTP, en paralelo): pedimos las direcciones de todos los reproductores y resolvemos a la vez los
-  // que no necesitan prueba de trabajo (Byse/Filemoon va aparte, porque puede tardar 15-20 s). El navegador oculto
-  // nunca corre en paralelo: sigue en la fase 2, uno por uno.
+  // que no necesitan prueba de trabajo. Byse/Filemoon va aparte por el desafío PoW; StreamWish conserva la fase
+  // de navegador secuencial para no bloquear en paralelo las solicitudes de reproducción.
   const prepared = new Map();
   const isPow = (embed) => { try { const h = new URL(embed).hostname.toLowerCase(); return /(^|\.)(bysekoze\.com|bysesukior\.com|n1mwq\.org)$/.test(h); } catch { return false; } };
   const phase1 = await Promise.all(servers.map(async (server, index) => {
@@ -1921,8 +1921,8 @@ async function resolveInner(ref) {
       left.push(i);
       continue;
     }
-    // Primero medir los servidores elegidos con navegador. Si fallan, conservar el resolver directo
-    // que ya encontró otra fuente como fallback antes de probar servidores adicionales.
+    // Primero probar StreamWish con navegador cuando corresponda. Filemoon/Bysekoze conserva el resolver directo
+    // antes de cualquier captura genérica; si falla, se mantiene la fuente como alternativa.
     if (fast.length && hasBrowserTestServers && tried >= browserTestIndexes.length) {
       stream = fast[0].stream;
       for (const remaining of allIndexes) {
