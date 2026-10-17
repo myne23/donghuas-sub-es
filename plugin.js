@@ -15,7 +15,7 @@ const SD = { key: "sd", name: "SeriesDonghua", base: "https://seriesdonghua.com"
 const MD = { key: "md", name: "MundoDonghua", base: "https://www.mundodonghua.com" };
 
 // Players the sites embed. kino.browser.capture only starts on a declared host.
-const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "n1mwq.org", "vidhidepro.com", "embedwish.com", "strp2p.com"];
+const EMBED_HOSTS = ["dailymotion.com", "ok.ru", "rumble.com", "voe.sx", "odysee.com", "odycdn.com", "bysekoze.com", "bysesukior.com", "n1mwq.org", "vidhidepro.com", "embedwish.com", "strp2p.com"];
 const MD_SERVER_NAMES = { fmoon: "Filemoon", amagi: "Voe", vhide: "VidHide", swish: "StreamWish" };
 
 const CAPTURE_MS = 20000; // Tiempo completo cuando el usuario elige una fuente manualmente.
@@ -1419,7 +1419,7 @@ async function resolveManual(embed, site, label) {
   }
   const headers = { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0 Safari/537.36", Referer: embed };
   try {
-    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") || host === "n1mwq.org" || host.endsWith(".n1mwq.org")) {
+    if (host === "bysekoze.com" || host.endsWith(".bysekoze.com") || host === "bysesukior.com" || host.endsWith(".bysesukior.com") || host === "n1mwq.org" || host.endsWith(".n1mwq.org")) {
       const stream = await resolveBysekoze(embed, site, label, headers);
       if (stream) return stream;
       return null;
@@ -1885,7 +1885,7 @@ async function resolveInner(ref) {
   // que no necesitan prueba de trabajo (Byse/Filemoon va aparte, porque puede tardar 15-20 s). El navegador oculto
   // nunca corre en paralelo: sigue en la fase 2, uno por uno.
   const prepared = new Map();
-  const isPow = (embed) => { try { const h = new URL(embed).hostname.toLowerCase(); return /(^|\.)(bysekoze\.com|n1mwq\.org)$/.test(h); } catch { return false; } };
+  const isPow = (embed) => { try { const h = new URL(embed).hostname.toLowerCase(); return /(^|\.)(bysekoze\.com|bysesukior\.com|n1mwq\.org)$/.test(h); } catch { return false; } };
   const phase1 = await Promise.all(servers.map(async (server, index) => {
     let embed = "";
     try { embed = await server.embed(); } catch { embed = ""; }
