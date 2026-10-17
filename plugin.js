@@ -488,7 +488,7 @@ function splitRef(ref) {
 }
 
 // Los bloques usan el mismo contrato de selector de Kino que DonghuaLife:
- // block:<fuente>:<ref original>:<inicio>, por ejemplo block:sd:/serie/:51.
+// block:<fuente>:<ref original>:<inicio>, por ejemplo block:sd:/serie/:51.
 function applyEpisodeBlocks(result, sourceRef, selectedStart = 0) {
   const all = Array.isArray(result && result.episodes) ? result.episodes : [];
   if (!all.length) return result;
@@ -523,7 +523,7 @@ function applyEpisodeBlocks(result, sourceRef, selectedStart = 0) {
 export async function episodes(ref) {
   await null;
   const rawRef = String(ref || "");
-  const blockMatch = /^block:(sd|md):(.+):(\\d+)$/.exec(rawRef);
+  const blockMatch = /^block:(sd|md):(.+):(\d+)$/.exec(rawRef);
   const sourceRef = blockMatch ? blockMatch[1] + ":" + blockMatch[2] : rawRef;
   const r = splitRef(sourceRef);
   if (!r) throw kino.error("not_found", "ref desconocido");
