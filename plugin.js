@@ -1182,10 +1182,17 @@ function byseMix(a) {
   a[2] = (a[2] + a[3]) >>> 0;
   a[1] = byseRotate((a[1] ^ a[2]) >>> 0, 7);
 }
+// Reutilizar buffers evita crear cientos de miles de arrays durante el PoW.
+const BYSE_POW_STATE = new Uint32Array(4);
+const BYSE_POW_MEMORY = new Uint32Array(512);
+const BYSE_POW_OUT = new Uint32Array(8);
 function byseWorkHash(input) {
-  const mask = 0xffffffff;
-  const state = [1779033703, 3144134277, 1013904242, 2773480762];
-  const memory = new Uint32Array(512);
+  const state = BYSE_POW_STATE;
+  state[0] = 1779033703;
+  state[1] = 3144134277;
+  state[2] = 1013904242;
+  state[3] = 2773480762;
+  const memory = BYSE_POW_MEMORY;
   for (let i = 0; i < input.length; i++) {
     state[0] = byseRotate((state[0] + input.charCodeAt(i)) >>> 0, 7);
     byseMix(state);
@@ -1206,7 +1213,7 @@ function byseWorkHash(input) {
       byseMix(state);
     }
   }
-  const out = new Uint32Array(8);
+  const out = BYSE_POW_OUT;
   for (let i = 0; i < 8; i++) {
     byseMix(state);
     let v = state[0] >>> 0;
@@ -1233,11 +1240,17 @@ async function byseSolvePow(nonce, difficulty) {
   if (!Number.isFinite(bits) || bits < 0 || bits > 32) return null;
   if (bits <= 0) return "0";
   const start = Date.now();
-  for (let counter = 0; counter < 200000 && Date.now() - start < 14000; counter++) {
+  let counter = 0;
+  for (; counter < 200000 && Date.now() - start < 14000; counter++) {
     const hash = byseWorkHash(String(nonce) + ":" + counter);
-    if (byseLeadingZeroBits(hash) >= bits) return String(counter);
-    if ((counter & 31) === 31) await kino.sleep(0);
+    if (byseLeadingZeroBits(hash) >= bits) {
+      log("Bysekoze PoW resuelto", "bits", bits, "intentos", counter + 1, "ms", Date.now() - start);
+      return String(counter);
+    }
+    // Yield menos seguido: dormir cada 32 intentos añadía demasiada sobrecarga.
+    if ((counter & 255) === 255) await kino.sleep(0);
   }
+  log("Bysekoze PoW agotado", "bits", bits, "intentos", counter, "ms", Date.now() - start);
   return null;
 }
 function byseFingerprint(tokenData) {
@@ -1725,8 +1738,7 @@ async function capture(site, server, options) {
     log("servidor " + server.name + ": reproductor no admitido (" + where + ")");
     return null;
   }
-  // Prueba temporal: StreamWish y Filemoon/Bysekoze usan captura del navegador oculto.
-  // VidHide y el resto de servidores conservan su resolución directa actual.
+  // StreamWish conserva su prueba de navegador; Filemoon/Bysekoze intenta primero el resolver HTTP directo.
   const forceBrowser = !!(prepared && prepared.forceBrowser);
   const manual = forceBrowser ? null : (prepared && prepared.manualDone ? prepared.manual : await resolveManual(embed, site, server.name));
   if (manual) {
@@ -1851,18 +1863,15 @@ async function resolveInner(ref) {
   };
   const isStreamWish = (name) => /streamwish|swish/i.test(String(name || ""));
   const isFilemoon = (name) => /filemoon|bysekoze|fmoon/i.test(String(name || ""));
-  const isBrowserTestServer = (name) => isStreamWish(name) || isFilemoon(name);
+  const isBrowserTestServer = (name) => isStreamWish(name);
   // Odysee no se prueba automáticamente: queda disponible como alternativa manual en SeriesDonghua.
   const automaticIndexes = allIndexes.filter((index) => !(r.site === SD && /odysee/i.test(String(servers[index].name || ""))));
   const attemptOrder = automaticIndexes.map((index) => ({ index, priority: priority(servers[index].name) }))
     .sort((a, b) => {
-      // En esta prueba, probar primero StreamWish y Filemoon/Bysekoze con navegador oculto en ambos sitios.
+      // Las fuentes con resolver directo (incluido Filemoon/Bysekoze) van antes que las pruebas de navegador.
       const aTarget = isBrowserTestServer(servers[a.index].name);
       const bTarget = isBrowserTestServer(servers[b.index].name);
-      if (aTarget !== bTarget) return aTarget ? -1 : 1;
-      if (aTarget && bTarget && isStreamWish(servers[a.index].name) !== isStreamWish(servers[b.index].name)) {
-        return isStreamWish(servers[a.index].name) ? -1 : 1;
-      }
+      if (aTarget !== bTarget) return aTarget ? 1 : -1;
       return a.priority - b.priority || a.index - b.index;
     })
     .map((item) => item.index);
@@ -1882,8 +1891,7 @@ async function resolveInner(ref) {
     try { embed = await server.embed(); } catch { embed = ""; }
     if (!embed || !embedAllowed(embed)) { prepared.set(index, { embed, manualDone: false }); return null; }
     if (isBrowserTestServer(server.name)) {
-      // No resolver HTTP directo para StreamWish/Filemoon durante esta prueba: medir la captura oculta.
-      // Esto también evita esperar al PoW de Bysekoze antes de medir el navegador.
+      // StreamWish conserva la captura de navegador; Filemoon/Bysekoze se resuelve por HTTP directo en la fase siguiente.
       prepared.set(index, { embed, manual: null, manualDone: true, forceBrowser: true });
       return null;
     }
