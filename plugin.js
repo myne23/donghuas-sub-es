@@ -487,11 +487,48 @@ function splitRef(ref) {
   return m ? { site: m[1] === "sd" ? SD : MD, path: m[2] } : null;
 }
 
+// Los bloques usan el mismo contrato de selector de Kino que DonghuaLife:
+ // block:<fuente>:<ref original>:<inicio>, por ejemplo block:sd:/serie/:51.
+function applyEpisodeBlocks(result, sourceRef, selectedStart = 0) {
+  const all = Array.isArray(result && result.episodes) ? result.episodes : [];
+  if (!all.length) return result;
+  const maxNumber = all.reduce((max, ep) => Math.max(max, Number(ep.number) || 0), 0);
+  const blockSize = Math.ceil(all.length / 50) > 50 ? 100 : 50;
+  const needsBlocks = all.length > 50 || selectedStart > 0;
+  if (!needsBlocks) return result;
+
+  const firstNumber = all.reduce((min, ep) => Math.min(min, Number(ep.number) || Infinity), Infinity);
+  const firstStart = Number.isFinite(firstNumber) ? Math.floor((firstNumber - 1) / blockSize) * blockSize + 1 : 1;
+  const selectors = [];
+  for (let start = firstStart; start <= maxNumber; start += blockSize) {
+    const end = Math.min(start + blockSize - 1, maxNumber);
+    selectors.push({
+      id: "episodes-block-" + sourceRef.replace(/[^a-z0-9]+/gi, "-") + "-" + start,
+      ref: "block:" + sourceRef + ":" + start,
+      title: "Capítulos " + start + "-" + end + " T1",
+      number: 1 + (selectors.length + 1) / 100,
+      current: selectedStart ? start === selectedStart : start === firstStart
+    });
+  }
+  const activeStart = selectedStart || firstStart;
+  result.episodes = all.filter((ep) => {
+    const n = Number(ep.number) || 0;
+    return n >= activeStart && n < activeStart + blockSize;
+  });
+  result.seasons = selectors;
+  log("episodios por bloques", sourceRef, "rango", activeStart + "-" + Math.min(activeStart + blockSize - 1, maxNumber), "de", all.length, "episodios");
+  return result;
+}
+
 export async function episodes(ref) {
   await null;
-  const r = splitRef(ref);
+  const rawRef = String(ref || "");
+  const blockMatch = /^block:(sd|md):(.+):(\\d+)$/.exec(rawRef);
+  const sourceRef = blockMatch ? blockMatch[1] + ":" + blockMatch[2] : rawRef;
+  const r = splitRef(sourceRef);
   if (!r) throw kino.error("not_found", "ref desconocido");
-  return r.site === SD ? sdEpisodes(r.path) : mdEpisodes(r.path);
+  const result = r.site === SD ? await sdEpisodes(r.path) : await mdEpisodes(r.path);
+  return applyEpisodeBlocks(result, sourceRef, blockMatch ? Number(blockMatch[3]) : 0);
 }
 
 async function sdEpisodes(path, skipFusion = false) {
