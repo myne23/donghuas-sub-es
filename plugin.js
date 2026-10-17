@@ -1772,7 +1772,15 @@ async function capture(site, server, options) {
 async function resolveInner(ref) {
   await null;
   const lazy = /^srv:(\d+):((?:sd|md):\/.*)$/.exec(String(ref));
-  const mixed = !lazy ? /^mix:((?:sd|md):\/[^|]+)\|((?:sd|md):\/.*)$/.exec(String(ref)) : null;
+  const mixedMatch = !lazy ? /^mix:((?:sd|md):\/[^|]+)\|((?:sd|md):\/.*)$/.exec(String(ref)) : null;
+  // Prioridad global: si el episodio mixto incluye SeriesDonghua, resolver ese origen primero,
+  // incluso cuando la ficha y el ref original pertenecen a MundoDonghua. No cambia el menú
+  // de episodios ni elimina fuentes; solo normaliza el orden interno de resolución.
+  const mixed = mixedMatch &&
+    splitRef(mixedMatch[1])?.site === MD &&
+    splitRef(mixedMatch[2])?.site === SD
+      ? [mixedMatch[0], mixedMatch[2], mixedMatch[1]]
+      : mixedMatch;
   const epRef = lazy ? lazy[2] : mixed ? mixed[1] : String(ref);
   const mixedMdRef = mixed ? mixed[2] : "";
   const r = splitRef(epRef);
