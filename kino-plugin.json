@@ -1,7 +1,7 @@
 {
   "id": "donghuas-sub-es",
   "name": "Donghuas Sub ES",
-  "version": "0.1.63",
+  "version": "0.1.64",
   "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Donghuas subtitulados al español, con fusión bidireccional de fuentes y deduplicación de videos Dailymotion.",
