@@ -327,17 +327,17 @@ async function findMatchingMdSeries(title, sdPath = "") {
 // SeriesDonghua: <a href="...?page=2" rel="next">. MundoDonghua: /lista-donghuas, /lista-donghuas/2, /lista-donghuas/3...
 function nextPath(html, path, numberedBase) {
   if (numberedBase) {
-    const base = numberedBase.replace(/\\/+$/, "");
-    const currentMatch = new RegExp("^" + base + "(?:/(\\d+))?/?(?:\\?.*)?$").exec(pathOf(path));
+    const base = numberedBase.replace(/\/+$/, "");
+    const currentMatch = new RegExp("^" + base + "(?:\/(\d+))?\/?(?:\?.*)?$").exec(pathOf(path));
     const cur = Number((currentMatch && currentMatch[1]) || 1);
     const next = base + "/" + (cur + 1);
     // MundoDonghua may use absolute URLs, single-quoted hrefs or trailing slashes.
     // Compare normalized paths rather than looking for one exact HTML string.
-    const hrefs = /<a\\b[^>]*\\bhref\\s*=\\s*(["'])(.*?)\\1/gi;
+    const hrefs = /<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1/gi;
     let m;
     while ((m = hrefs.exec(html))) {
       const candidate = pathOf(m[2]);
-      if (candidate.replace(/\\/+$/, "") === next) return next;
+      if (candidate.replace(/\/+$/, "") === next) return next;
     }
     return "";
   }
