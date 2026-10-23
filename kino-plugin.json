@@ -1,7 +1,7 @@
 {
   "id": "donghuas-sub-es",
   "name": "Donghuas Sub ES",
-  "version": "0.1.67",
+  "version": "0.1.68",
   "apiVersion": 9,
   "entry": "plugin.js",
   "description": "Donghua subtitulado al español en Kino. Explora series y episodios de SeriesDonghua y MundoDonghua, con búsqueda combinada y múltiples servidores de reproducción.",

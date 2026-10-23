@@ -57,7 +57,7 @@ function sites(extra = {}) {
     "https://seriesdonghua.com/episodios?page=2": sdCard("/gu-an-episodio-1/", "Gu An", 1),
     "https://www.mundodonghua.com/lista-donghuas/2": mdCard("/donghua/gu-an", "Gu An"),
     "https://seriesdonghua.com/todos-los-donghuas": sdCard("/gu-an/", "Gu An") + sdCard("/doupo-7/", "Doupo 7") + `<a rel="next" href="/todos-los-donghuas?page=2">2</a>`,
-    "https://www.mundodonghua.com/lista-donghuas": mdCard("/donghua/swallowed-star-3", "Swallowed Star 3") + `<a href="/lista-donghuas/2"><i class="fas fa-chevron-right"></i></a>`,
+    "https://www.mundodonghua.com/lista-donghuas": mdCard("/donghua/swallowed-star-3", "Swallowed Star 3") + `<a href='https://www.mundodonghua.com/lista-donghuas/2/'><i class="fas fa-chevron-right"></i></a>`,
     "https://seriesdonghua.com/buscar.php?s=gu": sdCard("/gu-an/", "Gu An"),
     "https://www.mundodonghua.com/busquedas?donghua=gu": mdCard("/donghua/gu-an", "Gu An"),
     "https://www.mundodonghua.com/busquedas?donghua=Gu%20An": mdCard("/donghua/gu-an", "Gu An"),
