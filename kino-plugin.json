@@ -4,7 +4,7 @@
   "version": "0.1.67",
   "apiVersion": 9,
   "entry": "plugin.js",
-  "description": "Donghuas subtitulados al español, con fusión bidireccional de fuentes y deduplicación de videos Dailymotion.",
+  "description": "Donghua subtitulado al español en Kino. Explora series y episodios de SeriesDonghua y MundoDonghua, con búsqueda combinada y múltiples servidores de reproducción.",
   "author": "myne23",
   "homepage": "https://github.com/myne23/donghuas-sub-es",
   "categories": [
