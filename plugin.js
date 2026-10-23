@@ -328,7 +328,7 @@ async function findMatchingMdSeries(title, sdPath = "") {
 function nextPath(html, path, numberedBase) {
   if (numberedBase) {
     const base = numberedBase.replace(/\/+$/, "");
-    const currentMatch = new RegExp("^" + base + "(?:\/(\d+))?\/?(?:\?.*)?$").exec(pathOf(path));
+    const currentMatch = /\/(\d+)\/?$/.exec(pathOf(path));
     const cur = Number((currentMatch && currentMatch[1]) || 1);
     const next = base + "/" + (cur + 1);
     // MundoDonghua may use absolute URLs, single-quoted hrefs or trailing slashes.
